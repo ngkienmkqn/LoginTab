@@ -79,7 +79,7 @@ async function createWindow() {
 
     mainWindow.once('ready-to-show', () => {
         mainWindow.show();
-        mainWindow.webContents.openDevTools(); // ENABLE DEVTOOLS FOR DEBUGGING
+        // DevTools behavior controlled by login role now
     });
 
     // Intercept close to hide in tray
@@ -89,6 +89,15 @@ async function createWindow() {
             mainWindow.hide();
         }
         return false;
+    });
+
+    // Toggle DevTools (RBAC)
+    ipcMain.on('toggle-devtools', (event, { visible }) => {
+        if (visible) {
+            mainWindow.webContents.openDevTools();
+        } else {
+            mainWindow.webContents.closeDevTools();
+        }
     });
 
     createTray();

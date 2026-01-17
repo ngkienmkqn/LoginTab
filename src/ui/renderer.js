@@ -132,6 +132,15 @@ async function handleLogin() {
 
             applyPermissions();
             loadAllData();
+
+            // Toggle DevTools based on Role
+            console.log('User Role:', currentUser.role);
+            if (currentUser.role === 'super_admin') {
+                ipcRenderer.send('toggle-devtools', { visible: true });
+            } else {
+                ipcRenderer.send('toggle-devtools', { visible: false });
+            }
+
             // Start 2FA loop only after login
             setInterval(update2FACodes, 1000);
         } else {
@@ -2444,7 +2453,7 @@ async function resetDatabaseWithConfirmation() {
 window.resetDatabaseWithConfirmation = resetDatabaseWithConfirmation;
 
 // --- Launch Function (Manual Override) ---
-window.launch = async function(id) {
+window.launch = async function (id) {
     if (!id) return;
     console.log('Launching manual session for:', id);
     // Explicitly send mode: 'manual' to prevent auto-close behavior
