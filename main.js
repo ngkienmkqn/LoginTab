@@ -51,6 +51,13 @@ async function createWindow() {
     await session.defaultSession.clearCache();
     console.log('[Main] Cache cleared for fresh start');
 
+    // Global menu disable
+    Menu.setApplicationMenu(null);
+
+    const iconPath = path.join(__dirname, 'src/ui/assets/icon.png');
+    console.log('[Main] Loading Icon from:', iconPath);
+    const appIcon = nativeImage.createFromPath(iconPath);
+
     mainWindow = new BrowserWindow({
         width: 1200,
         height: 800,
@@ -59,10 +66,14 @@ async function createWindow() {
             contextIsolation: false,
             devTools: true
         },
-        title: 'Spectre Browser',
+        title: 'Login Tab',
+        icon: appIcon,
+        autoHideMenuBar: true,
         backgroundColor: '#1e1e1e',
         show: false // Show only when ready
     });
+
+    mainWindow.setMenu(null);
 
     mainWindow.loadFile(path.join(__dirname, 'src/ui/index.html'));
 

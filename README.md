@@ -1,4 +1,4 @@
-# Spectre Browser Automation - Gmail Bypass Edition 🚀
+# Login Tab - Gmail Bypass Edition 🚀
 
 > **STATUS: STABLE**
 > **Tested:** Successfully logs into Gmail (Windows N / Standard Windows) as of 2026.
