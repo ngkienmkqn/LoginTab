@@ -2,7 +2,15 @@ const puppeteerCore = require('puppeteer-core');
 const { addExtra } = require('puppeteer-extra');
 const puppeteer = addExtra(puppeteerCore);
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-puppeteer.use(StealthPlugin());
+
+// Verify Manual Evasion is enough, disable Plugin's Webdriver evasion to avoid flag
+// const stealth = StealthPlugin();
+// // stealth.enabledEvasions.delete('navigator.webdriver'); // Enabled: Let Stealth handle it!
+// // Re-enabled Stealth defaults for maximum compatibility
+// // stealth.enabledEvasions.delete('chrome.runtime'); 
+// // stealth.enabledEvasions.delete('navigator.plugins');
+// // stealth.enabledEvasions.delete('navigator.permissions');
+// puppeteer.use(stealth); // TEST CASE 4: DISABLED STEALTH PLUGIN
 const path = require('path');
 const fs = require('fs-extra');
 const { app } = require('electron');
@@ -24,7 +32,7 @@ class BrowserManager {
     // Track active browser instances by account ID
     static activeBrowsers = new Map();
 
-    static async launchProfile(account) {
+    static async launchProfile(account, mode = null) {
         // Check if browser already open for this account
         if (BrowserManager.activeBrowsers.has(account.id)) {
             const existingBrowser = BrowserManager.activeBrowsers.get(account.id);
@@ -130,11 +138,23 @@ class BrowserManager {
         const possiblePaths = [
             'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
             'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+            'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+            'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
             process.env.CHROME_PATH
         ];
 
-        const executablePath = possiblePaths.find(p => p && fs.existsSync(p));
-        if (!executablePath) throw new Error('Chrome executable not found.');
+        let executablePath = null;
+        for (const p of possiblePaths) {
+            if (!p) continue;
+            const exists = fs.existsSync(p);
+            console.log(`[BrowserManager] Checking path: ${p} -> ${exists}`);
+            if (exists) {
+                executablePath = p;
+                break;
+            }
+        }
+        if (!executablePath) throw new Error('Chrome/Edge executable not found.');
+        console.log(`[BrowserManager] Using executable: ${executablePath}`);
 
         const userDataDir = path.join(app.getPath('userData'), 'sessions', account.id);
         await fs.ensureDir(userDataDir);
@@ -179,19 +199,19 @@ class BrowserManager {
         ];
 
         if (account.fingerprint && account.fingerprint.resolution) {
-            args.push(`--window - size=${account.fingerprint.resolution.replace('x', ',')} `);
+            args.push(`--window-size=${account.fingerprint.resolution.replace('x', ',')}`);
         } else {
             args.push('--start-maximized');
         }
 
         // User Agent from fingerprint (or default)
         if (account.fingerprint && account.fingerprint.userAgent) {
-            args.push(`--user - agent=${account.fingerprint.userAgent} `);
+            args.push(`--user-agent=${account.fingerprint.userAgent}`);
         } else {
             // Fallback to latest Chrome if no fingerprint
-            args.push(`--user - agent=Mozilla / 5.0(Windows NT 10.0; Win64; x64) AppleWebKit / 537.36(KHTML, like Gecko) Chrome / 131.0.0.0 Safari / 537.36`);
+            args.push(`--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36`);
         }
-        args.push(`--lang = ${account.fingerprint.language || 'en-US'} `); // Match fingerprint language
+        args.push(`--lang=${account.fingerprint.language || 'en-US'}`); // Match fingerprint language
         args.push('--exclude-switches=enable-automation');
 
         // TIMEZONE RANDOMIZATION (Compatible Zones)
@@ -252,7 +272,7 @@ class BrowserManager {
             userDataDir,
             args: finalArgs,
             ignoreHTTPSErrors: true,
-            ignoreDefaultArgs: ['--enable-automation', '--disable-extensions'] // Only remove automation flags
+            ignoreDefaultArgs: ['--enable-automation', '--disable-extensions', '--disable-blink-features=AutomationControlled'] // Only remove automation flags
         });
 
         // ---------------------------------------------------------
@@ -264,27 +284,14 @@ class BrowserManager {
 
         // 1. Remove "cdc_" property (Puppeteer marker)
         // 2. Inject advanced evasion scripts before ANY script loads
-        await evasionPage.evaluateOnNewDocument(() => {
-            // Strip cdc_ artifacts
-            const cdc = Object.getOwnPropertyNames(window).filter(k => k.startsWith('cdc_'));
-            cdc.forEach(k => delete window[k]);
-        });
+        // 1. Inject advanced evasion scripts before ANY script loads
+        // (CDC removal is included in PuppeteerEvasion)
 
         const evasionScript = PuppeteerEvasion.getAllEvasionScripts(account.fingerprint);
         await evasionPage.evaluateOnNewDocument(evasionScript);
         console.log('[Evasion] Injecting comprehensive evasion scripts...');
 
-        browser.on('disconnected', async () => {
-            // ... existing cleanup code (will not be touched by replace if I target correctly)
-            // functionality remains same
-            console.log(`[BrowserManager] Browser closed. Cleaning up...`);
-            BrowserManager.activeBrowsers.delete(account.id);
-            // ...
-        });
 
-        // Use start line and end line to skip the disconnect block to keep it simple, 
-        // wait, I can't skip the middle with replace_file_content easily without providing content.
-        // I will just change the variable name in the top part.
 
 
         browser.on('disconnected', async () => {
@@ -384,107 +391,9 @@ class BrowserManager {
             console.error('[BrowserManager] Injection error:', err);
         }
 
-        // Enhanced Anti-Detection Fingerprinting
-        await evasionPage.evaluateOnNewDocument((fp) => {
-            // 1. Navigator Properties
-            Object.defineProperty(navigator, 'webdriver', { get: () => false });
-            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
 
-            // 2. Chrome Runtime
-            window.chrome = {
-                runtime: {},
-                loadTimes: function () { },
-                csi: function () { },
-                app: {}
-            };
 
-            // 3. Permissions
-            const originalQuery = window.navigator.permissions.query;
-            window.navigator.permissions.query = (parameters) => (
-                parameters.name === 'notifications' ?
-                    Promise.resolve({ state: Notification.permission }) :
-                    originalQuery(parameters)
-            );
 
-            // 4. Canvas Fingerprinting Protection
-            const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
-            HTMLCanvasElement.prototype.toDataURL = function (type) {
-                if (type === 'image/png' && this.width === 280 && this.height === 60) {
-                    // Likely fingerprinting attempt
-                    const context = this.getContext('2d');
-                    const imageData = context.getImageData(0, 0, this.width, this.height);
-                    for (let i = 0; i < imageData.data.length; i += 4) {
-                        imageData.data[i] = imageData.data[i] ^ 0x01; // Add noise
-                    }
-                    context.putImageData(imageData, 0, 0);
-                }
-                return originalToDataURL.apply(this, arguments);
-            };
-
-            // 5. Audio Context Fingerprinting Protection
-            const AudioContext = window.AudioContext || window.webkitAudioContext;
-            if (AudioContext) {
-                const originalCreateAnalyser = AudioContext.prototype.createAnalyser;
-                AudioContext.prototype.createAnalyser = function () {
-                    const analyser = originalCreateAnalyser.call(this);
-                    const originalGetFloatFrequencyData = analyser.getFloatFrequencyData;
-                    analyser.getFloatFrequencyData = function (array) {
-                        originalGetFloatFrequencyData.call(this, array);
-                        for (let i = 0; i < array.length; i++) {
-                            array[i] = array[i] + (Math.random() - 0.5) * 0.0001; // Add noise
-                        }
-                    };
-                    return analyser;
-                };
-            }
-
-            // 6. WebRTC Leak Prevention
-            const originalGetUserMedia = navigator.mediaDevices.getUserMedia;
-            navigator.mediaDevices.getUserMedia = function () {
-                return originalGetUserMedia.apply(this, arguments).catch(() => {
-                    throw new DOMException('Permission denied', 'NotAllowedError');
-                });
-            };
-
-            // 7. Timezone Consistency
-            if (fp.timezone) {
-                const originalDateTimeFormat = Intl.DateTimeFormat;
-                Intl.DateTimeFormat = function (...args) {
-                    if (args.length === 0 || !args[0]) {
-                        args[0] = fp.timezone;
-                    }
-                    return new originalDateTimeFormat(...args);
-                };
-                Intl.DateTimeFormat.prototype = originalDateTimeFormat.prototype;
-            }
-
-            // 8. Screen Properties
-            if (fp.resolution) {
-                const [width, height] = fp.resolution.split('x').map(Number);
-                Object.defineProperty(window.screen, 'width', { get: () => width });
-                Object.defineProperty(window.screen, 'height', { get: () => height });
-                Object.defineProperty(window.screen, 'availWidth', { get: () => width });
-                Object.defineProperty(window.screen, 'availHeight', { get: () => height - 40 });
-            }
-
-            // 9. Battery API
-            if (navigator.getBattery) {
-                navigator.getBattery = () => Promise.resolve({
-                    charging: true,
-                    chargingTime: 0,
-                    dischargingTime: Infinity,
-                    level: 1
-                });
-            }
-
-            // 10. Connection API
-            if (navigator.connection) {
-                Object.defineProperty(navigator.connection, 'rtt', { get: () => 50 });
-                Object.defineProperty(navigator.connection, 'downlink', { get: () => 10 });
-                Object.defineProperty(navigator.connection, 'effectiveType', { get: () => '4g' });
-            }
-        }, account.fingerprint || {});
 
         // CLIENT-SIDE SCRIPT (Injected) - Handles Username, Password, Logs
         // ----------------------------------------------------------------
@@ -500,7 +409,7 @@ class BrowserManager {
                         console.log('[Enforcer] Reverted password field to secure type.');
                     }
                 });
-    
+         
                 // 2. Kill Reveal Buttons (Tazapay specific & Generic)
                 const targets = [
                     'div[data-cy="signin-password-input"] svg',
@@ -509,7 +418,7 @@ class BrowserManager {
                     '.MuiInputAdornment-positionEnd', // Material UI
                     'input::-ms-reveal' // Pseudo-elements can't be removed by JS, handled by CSS or just ignored as we enforce type
                 ];
-    
+         
                 targets.forEach(selector => {
                     document.querySelectorAll(selector).forEach(el => {
                         el.remove(); // DELETE FROM DOM
@@ -600,6 +509,23 @@ class BrowserManager {
                 try {
                     await page.goto(account.loginUrl, { waitUntil: 'load', timeout: 60000 });
                 } catch (e) { console.warn('Nav timeout, continuing...'); }
+
+                // Automation Mode Check
+                // Valid modes: 'auto' (default), 'manual'
+                // If mode arg is passed (e.g. from Open button), it overrides DB config
+                const automationMode = (mode || account.automation_mode || 'auto').toLowerCase();
+                console.log(`[BrowserManager] Automation Mode: ${automationMode}`);
+
+                if (automationMode === 'auto' && account.workflow_id) {
+                    await BrowserManager.executeWorkflow(browser, page, account.workflow_id);
+                    // If workflow completes, close browser?
+                    // Usually executeWorkflow closes it, or we close it here.
+                    // For now, let's assume we want to close after auto.
+                    try { await browser.close(); } catch (e) { }
+                } else {
+                    console.log('[BrowserManager] Manual mode or no workflow. Keeping browser open.');
+                }
+
 
                 // IP Check
                 try {

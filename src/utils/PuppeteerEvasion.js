@@ -16,21 +16,23 @@ class PuppeteerEvasion {
         }
 
         return [
-            this.fixChromeRuntime(fingerprint),
-            this.fixPermissions(fingerprint),
-            this.fixPlugins(fingerprint),
+            // TEST CASE 4: MANUAL EVASION ONLY (No Stealth Plugin)
+            this.fixChromeRuntime(fingerprint), // ENABLED: Replaces Stealth
+            this.fixPermissions(fingerprint),   // ENABLED: Replaces Stealth
+            this.fixPlugins(fingerprint),       // ENABLED: Replaces Stealth (Fixed Name Bug)
             this.fixWebGL(fingerprint),
             this.fixNavigator(fingerprint),
-            this.fixUserAgentData(fingerprint), // NEW: Client Hints
-            this.fixFonts(fingerprint),         // NEW: Font Masking
+            this.fixUserAgentData(fingerprint),
+            this.fixFonts(fingerprint),
             this.fixWindow(fingerprint),
             this.fixIframe(fingerprint),
             this.fixMediaDevices(fingerprint),
             this.fixBattery(fingerprint),
             this.fixConnection(fingerprint),
             this.fixWebRTC(fingerprint),
-            this.fixCanvas(fingerprint),
-            this.fixAudio(fingerprint)
+            // this.fixCanvas(fingerprint),    // DISABLED: Noise
+            // this.fixAudio(fingerprint),     // DISABLED: Noise
+            this.removeCDC()
         ].join('\n\n');
     }
 
@@ -109,7 +111,7 @@ window.navigator.permissions.query = function(parameters) {
      * 3. Fix Plugins (Dynamic from Fingerprint)
      */
     static fixPlugins(fp) {
-        const pluginNames = fp.plugins || [
+        const inputPlugins = fp.plugins || [
             'PDF Viewer',
             'Chrome PDF Viewer',
             'WebKit built-in PDF'
@@ -119,15 +121,21 @@ window.navigator.permissions.query = function(parameters) {
         const mimeMap = {
             'PDF Viewer': { type: 'application/pdf', suffixes: 'pdf' },
             'Chrome PDF Viewer': { type: 'application/pdf', suffixes: 'pdf' },
-            'WebKit built-in PDF': { type: 'application/pdf', suffixes: 'pdf' }
+            'WebKit built-in PDF': { type: 'application/pdf', suffixes: 'pdf' },
+            'Chrome PDF Plugin': { type: 'application/pdf', suffixes: 'pdf' }
         };
 
-        const pluginsData = pluginNames.map(name => ({
-            name: name,
-            filename: 'internal-pdf-viewer',
-            description: 'Portable Document Format',
-            mimeTypes: [mimeMap[name] || { type: 'application/pdf', suffixes: 'pdf' }]
-        }));
+        const pluginsData = inputPlugins.map(p => {
+            const name = typeof p === 'string' ? p : p.name;
+            const filename = typeof p === 'string' ? 'internal-pdf-viewer' : (p.filename || 'internal-pdf-viewer');
+
+            return {
+                name: name,
+                filename: filename,
+                description: 'Portable Document Format',
+                mimeTypes: [mimeMap[name] || { type: 'application/pdf', suffixes: 'pdf' }]
+            };
+        });
 
         return `
 // Plugins Fix
@@ -247,7 +255,7 @@ if (window.WebGL2RenderingContext) {
 
         return `
 // Navigator Properties Fix
-Object.defineProperty(navigator, 'webdriver', { get: () => false }); 
+Object.defineProperty(navigator, 'webdriver', { get: () => undefined }); // RESTORED: Manual Mode
 Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
 Object.defineProperty(navigator, 'platform', { get: () => '${platform}' });
 // Only set oscpu on Windows/Linux (Mac doesn't have it)
@@ -258,13 +266,6 @@ Object.defineProperty(navigator, 'deviceMemory', { get: () => ${deviceMemory} })
 // DEEP CLEAN: Delete webdriver from prototype chain
 try {
     delete Object.getPrototypeOf(navigator).webdriver;
-} catch(e) {}
-try {
-     // Overwrite the property descriptor on the prototype itself if delete fails
-    Object.defineProperty(Object.getPrototypeOf(navigator), 'webdriver', {
-        get: () => false,
-        configurable: true
-    });
 } catch(e) {}
         `;
     }
@@ -324,6 +325,64 @@ if (navigator.userAgentData) {
         })
     });
 }
+        `;
+    }
+
+    /**
+     * 7. Fix Permissions API (Gmail Check)
+     */
+    static fixPermissions() {
+        return `
+// Override Permissions API
+const originalQuery = window.navigator.permissions.query;
+window.navigator.permissions.query = (parameters) => (
+    parameters.name === 'notifications' ?
+        Promise.resolve({ state: Notification.permission }) :
+        originalQuery(parameters)
+);
+        `;
+    }
+
+    /**
+     * 8. Mock Chrome Runtime (Extensions Check)
+     */
+    static fixChromeRuntime() {
+        return `
+// Mock chrome.runtime
+if (!window.chrome) window.chrome = {};
+if (!window.chrome.runtime) {
+    window.chrome.runtime = {
+        connect: () => {},
+        sendMessage: () => {},
+        onMessage: { addListener: () => {}, removeListener: () => {} },
+        getManifest: () => ({ version: '1.0' }),
+        id: 'ophjlpahpchlmihnnnihgmmeilfjmjjc' // Dummy ID
+    };
+}
+        `;
+    }
+
+    /**
+     * 9. Remove CDP Signatures (CDC)
+     */
+    static removeCDC() {
+        return `
+// Remove CDP signatures
+const cdcProps = [
+    'cdc_adoQpoasnfa76pfcZLmcfl_Array',
+    'cdc_adoQpoasnfa76pfcZLmcfl_Promise',
+    'cdc_adoQpoasnfa76pfcZLmcfl_Symbol'
+];
+cdcProps.forEach(prop => {
+    try { delete window[prop]; } catch(e) {}
+});
+
+// Deep scan for other cdc_ properties
+Object.keys(window).forEach(key => {
+    if (/^cdc_/.test(key)) {
+        try { delete window[key]; } catch(e) {}
+    }
+});
         `;
     }
 
@@ -542,6 +601,67 @@ if (AudioContext) {
 }
         `;
     }
+
+
+    /**
+     * 14. Fix Permissions API (Gmail Check)
+     */
+    static fixPermissions() {
+        return `
+// Override Permissions API
+const originalQuery = window.navigator.permissions.query;
+window.navigator.permissions.query = (parameters) => (
+    parameters.name === 'notifications' ?
+        Promise.resolve({ state: Notification.permission }) :
+        originalQuery(parameters)
+);
+        `;
+    }
+
+    /**
+     * 15. Mock Chrome Runtime (Extensions Check)
+     */
+    static fixChromeRuntime() {
+        return `
+// Mock chrome.runtime
+if (!window.chrome) window.chrome = {};
+if (!window.chrome.runtime) {
+    window.chrome.runtime = {
+        connect: () => {},
+        sendMessage: () => {},
+        onMessage: { addListener: () => {}, removeListener: () => {} },
+        getManifest: () => ({ version: '1.0' }),
+        id: 'ophjlpahpchlmihnnnihgmmeilfjmjjc'
+    };
+}
+        `;
+    }
+
+    /**
+     * 16. Remove CDP Signatures (CDC)
+     */
+    static removeCDC() {
+        return `
+// Remove CDP signatures
+const cdcProps = [
+    'cdc_adoQpoasnfa76pfcZLmcfl_Array',
+    'cdc_adoQpoasnfa76pfcZLmcfl_Promise',
+    'cdc_adoQpoasnfa76pfcZLmcfl_Symbol'
+];
+cdcProps.forEach(prop => {
+    try { delete window[prop]; } catch(e) {}
+});
+
+// Deep scan for other cdc_ properties
+Object.keys(window).forEach(key => {
+    if (/^cdc_/.test(key)) {
+        try { delete window[key]; } catch(e) {}
+    }
+});
+        `;
+    }
+
+
 }
 
 module.exports = PuppeteerEvasion;

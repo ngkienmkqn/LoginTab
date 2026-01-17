@@ -29,7 +29,7 @@ class FingerprintGenerator {
             pixelRatio: this.pickRandom(random, [1, 1, 1.25]), // Mostly standard DPI
 
             // Navigator Properties (OS-Specific)
-            userAgent: osConfig.userAgent.replace('${chromeVersion}', chromeVersion),
+            userAgent: osConfig.userAgent.split('${chromeVersion}').join(chromeVersion),
             platform: osConfig.platform,
             platformName: osConfig.platformName, // For userAgentData
             oscpu: osConfig.oscpu, // May be undefined for Mac
@@ -82,9 +82,6 @@ class FingerprintGenerator {
 
             // Media Devices (realistic)
             mediaDevices: this.generateMediaDevices(random),
-
-            // Plugins (realistic Windows plugins)
-            plugins: this.generatePlugins(random),
 
             // Touch Support (desktop = no touch)
             maxTouchPoints: 0,

@@ -2442,3 +2442,12 @@ async function resetDatabaseWithConfirmation() {
 
 // Make globally available
 window.resetDatabaseWithConfirmation = resetDatabaseWithConfirmation;
+
+// --- Launch Function (Manual Override) ---
+window.launch = async function(id) {
+    if (!id) return;
+    console.log('Launching manual session for:', id);
+    // Explicitly send mode: 'manual' to prevent auto-close behavior
+    const result = await ipcRenderer.invoke('launch-browser', { id: id, mode: 'manual' });
+    if (!result.success) alert('Launch failed: ' + result.error);
+};

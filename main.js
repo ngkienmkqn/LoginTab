@@ -596,10 +596,18 @@ ipcMain.handle('delete-platform', async (event, id) => {
 });
 
 // Launch Profile
-ipcMain.handle('launch-browser', async (event, accountId) => {
+ipcMain.handle('launch-browser', async (event, arg) => {
     try {
+        let accountId = arg;
+        let modeOverride = null;
+
+        if (typeof arg === 'object' && arg.id) {
+            accountId = arg.id;
+            modeOverride = arg.mode;
+        }
+
         const pool = await getPool();
-        console.log(`[IPC] launch-browser called for: ${accountId}`);
+        console.log(`[IPC] launch-browser called for: ${accountId} (Mode: ${modeOverride})`);
 
         // Get full account data
         const [rows] = await pool.query('SELECT * FROM accounts WHERE id = ?', [accountId]);
@@ -623,7 +631,7 @@ ipcMain.handle('launch-browser', async (event, accountId) => {
             console.log('[Main] Local session missing. Starting fresh.');
         }
 
-        const browser = await BrowserManager.launchProfile(account);
+        const browser = await BrowserManager.launchProfile(account, modeOverride);
 
         // Update Last Active timestamp on close
         browser.on('disconnected', async () => {
