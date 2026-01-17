@@ -1,6 +1,6 @@
 {
     "name": "login-tab",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "description": "Login Tab - Advanced Account Manager",
     "main": "main.js",
     "scripts": {
@@ -9,6 +9,10 @@
     },
     "author": "Antigravity",
     "license": "ISC",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/ngkienmkqn/LoginTab.git"
+    },
     "dependencies": {
         "adm-zip": "^0.5.16",
         "electron-store": "^8.1.0",
