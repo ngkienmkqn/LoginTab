@@ -1,0 +1,360 @@
+const { app, BrowserWindow, ipcMain } = require('electron');
+const path = require('path');
+const fs = require('fs-extra');
+const { initDatabase, getDb } = require('./src/database/db');
+const BrowserManager = require('./src/managers/BrowserManager');
+const { v4: uuidv4 } = require('uuid');
+
+let mainWindow;
+
+// Initialize System
+async function initializeSystem() {
+    try {
+        await initDatabase();
+        await fs.ensureDir(path.join(__dirname, 'sessions'));
+        createWindow();
+    } catch (error) {
+        console.error('System initialization failed:', error);
+    }
+}
+
+async function createWindow() {
+    // Initialize DB & Seed
+    const db = getDb();
+    await db.read();
+    db.data.accounts = db.data.accounts || [];
+    db.data.proxies = db.data.proxies || [];
+    db.data.extensions = db.data.extensions || [];
+    db.data.platforms = db.data.platforms || [];
+    db.data.users = db.data.users || [];
+
+    // Seed Super Admin if not exists
+    if (db.data.users.length === 0) {
+        db.data.users.push({
+            id: 'super-admin-01',
+            username: 'admin',
+            password: 'admin',
+            role: 'super_admin'
+        });
+        console.log('[Main] Seeded default Super Admin user.');
+    }
+    await db.write();
+    mainWindow = new BrowserWindow({
+        width: 1200,
+        height: 800,
+        webPreferences: {
+            nodeIntegration: true,
+            contextIsolation: false,
+        },
+        title: 'SPECTRE',
+        backgroundColor: '#1e1e1e',
+    });
+
+    mainWindow.loadFile('src/ui/index.html');
+}
+
+app.whenReady().then(initializeSystem);
+
+app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit();
+});
+
+// --- IPC HANDLERS ---
+
+// Get all accounts
+ipcMain.handle('get-accounts', async () => {
+    const db = getDb();
+    await db.read();
+    return db.data.accounts || [];
+});
+
+// Create new account
+ipcMain.handle('create-account', async (event, { name, loginUrl, proxy, fingerprint, auth, extensionsPath }) => {
+    try {
+        const pool = await db();
+        const id = uuidv4();
+        const createdAt = new Date().toISOString();
+
+        await pool.query(
+            `INSERT INTO accounts (id, name, loginUrl, proxy_config, auth_config, fingerprint_config, extensions_path, lastActive)
+             VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
+            [
+                id, name, loginUrl,
+                JSON.stringify(proxy),
+                JSON.stringify(auth),
+                JSON.stringify(fingerprint),
+                extensionsPath
+            ]
+        );
+
+        return { success: true, account: { id, name, loginUrl, proxy, fingerprint, auth, extensionsPath, createdAt } };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Update existing account
+ipcMain.handle('update-account', async (event, updatedData) => {
+    try {
+        const pool = await db();
+        const { id, name, loginUrl, proxy, fingerprint, auth, extensionsPath } = updatedData;
+
+        await pool.query(
+            `UPDATE accounts SET 
+                name = ?, loginUrl = ?, proxy_config = ?, auth_config = ?, fingerprint_config = ?, extensions_path = ?
+             WHERE id = ?`,
+            [
+                name, loginUrl,
+                JSON.stringify(proxy),
+                JSON.stringify(auth),
+                JSON.stringify(fingerprint),
+                extensionsPath,
+                id
+            ]
+        );
+
+        return { success: true };
+    } catch (error) {
+        console.error('Update failed:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Get 2FA Codes
+ipcMain.handle('get-2fa-codes', async (event, items) => {
+    const { authenticator } = require('otplib');
+    return items.map(item => {
+        try {
+            return { id: item.id, token: authenticator.generate(item.secret) };
+        } catch (e) {
+            return { id: item.id, token: 'ERROR' };
+        }
+    });
+});
+
+const SyncManager = require('./src/managers/SyncManager');
+
+// --- Global Resource Handlers ---
+
+// Proxies
+ipcMain.handle('get-proxies', async () => {
+    const pool = await db();
+    const [rows] = await pool.query('SELECT * FROM proxies');
+    return rows;
+});
+
+ipcMain.handle('save-proxy', async (event, proxy) => {
+    const pool = await db();
+    if (proxy.id) {
+        // Check if exists
+        const [rows] = await pool.query('SELECT id FROM proxies WHERE id = ?', [proxy.id]);
+        if (rows.length > 0) {
+            await pool.query(
+                `UPDATE proxies SET type = ?, host = ?, port = ?, user = ?, pass = ? WHERE id = ?`,
+                [proxy.type, proxy.host, proxy.port, proxy.user, proxy.pass, proxy.id]
+            );
+        } else {
+            await pool.query(
+                `INSERT INTO proxies (id, type, host, port, user, pass) VALUES (?, ?, ?, ?, ?, ?)`,
+                [uuidv4(), proxy.type, proxy.host, proxy.port, proxy.user, proxy.pass]
+            );
+        }
+    } else {
+        await pool.query(
+            `INSERT INTO proxies (id, type, host, port, user, pass) VALUES (?, ?, ?, ?, ?, ?)`,
+            [uuidv4(), proxy.type, proxy.host, proxy.port, proxy.user, proxy.pass]
+        );
+    }
+    return { success: true };
+});
+
+ipcMain.handle('delete-proxy', async (event, id) => {
+    const pool = await db();
+    await pool.query('DELETE FROM proxies WHERE id = ?', [id]);
+    return { success: true };
+});
+
+// Login
+ipcMain.handle('auth-login', async (event, { username, password }) => {
+    const pool = await db();
+    console.log('[Auth] Attempt:', username, password);
+
+    // Note: In production use bcrypt. For now checking plain text as per requested flow
+    const [rows] = await pool.query('SELECT * FROM users WHERE username = ? AND password = ?', [username, password]);
+
+    if (rows.length > 0) {
+        const user = rows[0];
+        console.log('[Auth] Success for:', username);
+        return { success: true, user: { id: user.id, username: user.username, role: user.role } };
+    } else {
+        console.warn('[Auth] Failed login.');
+        return { success: false, error: 'Invalid Credentials' };
+    }
+});
+
+// Extensions
+ipcMain.handle('get-extensions', async () => {
+    const pool = await db();
+    const [rows] = await pool.query('SELECT * FROM extensions');
+    return rows;
+});
+
+ipcMain.handle('save-extension', async (event, ext) => {
+    const pool = await db();
+    await pool.query('INSERT INTO extensions (id, name, path) VALUES (?, ?, ?)', [uuidv4(), ext.name, ext.path]);
+    return { success: true };
+});
+
+ipcMain.handle('delete-extension', async (event, id) => {
+    const pool = await db();
+    await pool.query('DELETE FROM extensions WHERE id = ?', [id]);
+    return { success: true };
+});
+
+// Platforms (Presets)
+ipcMain.handle('get-platforms', async () => {
+    const pool = await db();
+    const [rows] = await pool.query('SELECT * FROM platforms');
+    return rows;
+});
+
+ipcMain.handle('save-platform', async (event, platform) => {
+    const pool = await db();
+    await pool.query('INSERT INTO platforms (id, name, url) VALUES (?, ?, ?)', [uuidv4(), platform.name, platform.url]);
+    return { success: true };
+});
+
+ipcMain.handle('update-platform', async (event, platform) => {
+    const pool = await db();
+    await pool.query(
+        'UPDATE platforms SET name = ?, url = ? WHERE id = ?',
+        [platform.name, platform.url, platform.id]
+    );
+    return { success: true };
+});
+
+ipcMain.handle('delete-platform', async (event, id) => {
+    const pool = await db();
+    await pool.query('DELETE FROM platforms WHERE id = ?', [id]);
+    return { success: true };
+});
+
+// Launch Profile
+ipcMain.handle('launch-profile', async (event, accountId) => {
+    try {
+        const pool = await db();
+        const [rows] = await pool.query('SELECT * FROM accounts WHERE id = ?', [accountId]);
+
+        if (rows.length === 0) throw new Error('Account not found');
+
+        // Reconstruct account object from DB columns
+        const r = rows[0];
+        const account = {
+            ...r,
+            proxy: r.proxy_config,
+            auth: r.auth_config,
+            fingerprint: r.fingerprint_config
+        };
+
+        // SYNC LOGIC: Check if local session exists
+        const sessionPath = path.join(__dirname, 'sessions', accountId);
+        const hasLocal = await fs.pathExists(sessionPath);
+
+        if (!hasLocal) {
+            // Try to download from 'Cloud'
+            console.log('[Main] Local session missing. Attempting cloud restore...');
+            const success = await SyncManager.unpackSession(accountId);
+            if (success) {
+                console.log('[Main] Restore successful.');
+            } else {
+                console.log('[Main] No data or unable to restore. Starting fresh session.');
+            }
+        }
+
+        const browser = await BrowserManager.launchProfile(account);
+
+        // On Close -> Auto Sync Up
+        browser.on('disconnected', async () => {
+            console.log(`[Main] Browser logged out for ${accountId}. Syncing up...`);
+            setTimeout(async () => {
+                await SyncManager.packSession(accountId);
+                // Update Last Active timestamp
+                await pool.query('UPDATE accounts SET lastActive = NOW() WHERE id = ?', [accountId]);
+                console.log('[Main] Sync complete.');
+            }, 2000);
+        });
+
+        return { success: true };
+    } catch (error) {
+        console.error('Launch failed:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Delete Account
+ipcMain.handle('delete-account', async (event, accountId) => {
+    try {
+        const pool = await db();
+
+        // Remove from DB
+        await pool.query('DELETE FROM accounts WHERE id = ?', [accountId]);
+
+        // Remove Session Data
+        const sessionPath = path.join(__dirname, 'sessions', accountId);
+        await fs.remove(sessionPath);
+
+        return { success: true };
+    } catch (error) {
+        console.error('Delete failed:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// --- USER MANAGEMENT (RBAC) ---
+
+ipcMain.handle('get-users', async () => {
+    const pool = await db();
+    const [rows] = await pool.query('SELECT * FROM users');
+    return rows;
+});
+
+ipcMain.handle('save-user', async (event, userData) => {
+    const pool = await db();
+
+    // Create New
+    if (!userData.id) {
+        // Check duplicate
+        const [exists] = await pool.query('SELECT id FROM users WHERE username = ?', [userData.username]);
+        if (exists.length > 0) return { success: false, error: 'Username already exists' };
+
+        await pool.query(
+            'INSERT INTO users (id, username, password, role) VALUES (?, ?, ?, ?)',
+            [uuidv4(), userData.username, userData.password, userData.role]
+        );
+    }
+    // Update Existing
+    else {
+        await pool.query(
+            'UPDATE users SET username = ?, password = ?, role = ? WHERE id = ?',
+            [userData.username, userData.password, userData.role, userData.id]
+        );
+    }
+    return { success: true };
+});
+
+ipcMain.handle('delete-user', async (event, id) => {
+    const pool = await db();
+    // Prevent deleting default admin if needed, though ID check is harder with random UUIDs unless we force ID.
+    // Assuming admin has specific 'super_admin' role check before delete in UI, but here we can check username too.
+
+    const [rows] = await pool.query('SELECT * FROM users WHERE id = ?', [id]);
+    if (rows.length > 0) {
+        const user = rows[0];
+        if (user.role === 'super_admin' && user.username === 'admin') {
+            return { success: false, error: 'Cannot delete default Super Admin' };
+        }
+    }
+
+    await pool.query('DELETE FROM users WHERE id = ?', [id]);
+    return { success: true };
+});

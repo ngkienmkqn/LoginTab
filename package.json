@@ -1,0 +1,53 @@
+{
+    "name": "spectre-browser",
+    "version": "1.0.0",
+    "description": "Spectre Browser - Advanced Account Manager",
+    "main": "main.js",
+    "scripts": {
+        "start": "electron .",
+        "build": "electron-builder"
+    },
+    "author": "Antigravity",
+    "license": "ISC",
+    "dependencies": {
+        "adm-zip": "^0.5.16",
+        "electron-store": "^8.1.0",
+        "fs-extra": "^11.2.0",
+        "hi-base32": "^0.5.1",
+        "jsqr": "^1.4.0",
+        "lowdb": "^7.0.1",
+        "mysql2": "^3.16.0",
+        "otplib": "^13.1.0",
+        "protobufjs": "^8.0.0",
+        "proxy-chain": "^2.7.0",
+        "puppeteer-core": "^22.6.0",
+        "puppeteer-extra": "^3.3.6",
+        "puppeteer-extra-plugin-stealth": "^2.11.2",
+        "uuid": "^9.0.1",
+        "winston": "^3.13.0"
+    },
+    "devDependencies": {
+        "electron": "^39.2.7",
+        "electron-builder": "^24.13.3"
+    },
+    "build": {
+        "appId": "com.spectre.browser",
+        "productName": "Spectre Browser",
+        "directories": {
+            "output": "dist"
+        },
+        "win": {
+            "target": [
+                "nsis",
+                "portable",
+                "dir"
+            ],
+            "forceCodeSigning": false
+        },
+        "files": [
+            "**/*",
+            "!sessions/*",
+            "!dist/*"
+        ]
+    }
+}

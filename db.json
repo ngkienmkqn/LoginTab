@@ -1,0 +1,443 @@
+{
+  "accounts": [
+    {
+      "id": "2dcfc4c1-e597-4a97-a49c-02bb7568fc57",
+      "name": "nguyenkienthehuman@gmail.com",
+      "loginUrl": "https://mail.google.com/mail/u/0/#inbox",
+      "extensionsPath": "",
+      "proxy": {
+        "type": "socks5",
+        "host": "74.81.37.141",
+        "port": "28929",
+        "user": "thehuman",
+        "pass": "Vanhanh123456"
+      },
+      "fingerprint": {
+        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
+        "resolution": "1920x1080"
+      },
+      "auth": {
+        "username": "nguyenkienthehuman@gmail.com",
+        "password": "@Vanhanh123!!",
+        "secret2FA": ""
+      },
+      "createdAt": "2026-01-11T10:25:27.623Z",
+      "lastActive": "2026-01-11T16:16:20.014Z"
+    },
+    {
+      "id": "5c527853-31d4-42b9-851d-254da448d2fb",
+      "name": "design.mylife91@gmail.com",
+      "loginUrl": "https://mail.google.com/mail/u/0/#inbox",
+      "extensionsPath": "",
+      "proxy": null,
+      "fingerprint": {
+        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "resolution": "1920x1080"
+      },
+      "auth": {
+        "username": "design.mylife91",
+        "password": "11081994",
+        "secret2FA": ""
+      },
+      "createdAt": "2026-01-11T11:05:08.923Z",
+      "lastActive": "2026-01-11T11:07:27.180Z"
+    }
+  ],
+  "proxies": [
+    {
+      "id": "46a33a45-9d15-4c10-9b0f-bc3d21faf58a",
+      "host": "74.81.37.141",
+      "port": "28929",
+      "user": "thehuman",
+      "pass": "Vanhanh123456",
+      "type": "socks5"
+    }
+  ],
+  "extensions": [],
+  "platforms": [
+    {
+      "id": "4ddbf95e-d6c2-472f-af01-5f29613af9ec",
+      "name": "Gmail",
+      "url": "https://mail.google.com/mail/u/0/#inbox"
+    },
+    {
+      "id": "a192e5da-7cdb-43a2-b77d-cfd1a8768d90",
+      "name": "Tazapay (Cổng)",
+      "url": "https://dashboard.tazapay.com/login"
+    },
+    {
+      "id": "feb2f4dc-6f55-443d-b867-9bf77e4a5305",
+      "name": "Stripe (Cổng)",
+      "url": "https://dashboard.stripe.com/login"
+    },
+    {
+      "id": "4932c621-4ef2-4599-8649-253e44175a4f",
+      "name": "Payoneer (Ví & Cổng)",
+      "url": "https://login.payoneer.com/"
+    },
+    {
+      "id": "2e7e0e75-ab33-4fae-90d5-0bd1a626a459",
+      "name": "Pingpong (Thẻ+ví)",
+      "url": "https://us.pingpongx.com/entrance/signin"
+    },
+    {
+      "id": "fc73750d-3958-4a25-8dd4-979ec095a0bb",
+      "name": "Lianlian Global (Thẻ+ví)",
+      "url": "https://v2.lianlianglobal.com/login"
+    },
+    {
+      "id": "0484355a-6973-4aea-9765-3780e45aaea8",
+      "name": "Epay (Ví)",
+      "url": "https://www.epay.com/login"
+    },
+    {
+      "id": "d723a984-3b01-413e-87cb-8a0c1bd03246",
+      "name": "Xtransfer (Ví)",
+      "url": "https://login.xtransfer.cn/"
+    },
+    {
+      "id": "1a1c39bf-ef30-41ae-8075-40cd062f0284",
+      "name": "Worldfirst (Thẻ+ví)",
+      "url": "https://portal.worldfirst.com/"
+    },
+    {
+      "id": "2697c4a1-d540-48e1-a1a2-877651925f45",
+      "name": "Statrys (Ví)",
+      "url": "https://app.statrys.com/login"
+    },
+    {
+      "id": "f459bcf8-1efd-42b9-bc53-378606c8134e",
+      "name": "Mercury (Ví)",
+      "url": "https://app.mercury.com/login"
+    },
+    {
+      "id": "9a452a90-faae-4c74-8528-2540ad5a15c1",
+      "name": "Aspire (Thẻ+ví)",
+      "url": "https://app.aspireapp.com/login"
+    },
+    {
+      "id": "3f1f385e-5098-4f29-9adb-05ac2a1c5e1b",
+      "name": "Vaiwallet (Ví)",
+      "url": "https://vaiwallet.com/login"
+    },
+    {
+      "id": "18988adb-6237-4ae6-be93-ee3cabcf5b46",
+      "name": "Wise (Ví)",
+      "url": "https://wise.com/login/"
+    },
+    {
+      "id": "1977b4d7-14fe-40f1-b0c2-ba58d8b58e27",
+      "name": "Brex (Ví)",
+      "url": "https://dashboard.brex.com/sign-in"
+    },
+    {
+      "id": "7330c75e-8472-4623-8408-349f2622086d",
+      "name": "Launchese (Ví & Cổng)",
+      "url": "https://launchese.com/login"
+    },
+    {
+      "id": "7ac4623f-9712-4687-bae9-fa8fe21dd51b",
+      "name": "Standard Chartered (Ví)",
+      "url": "https://www.sc.com/global/av/generated/login/"
+    },
+    {
+      "id": "3aafecab-c676-4b33-8f06-371e6a4e8d98",
+      "name": "Paypal (Ví & Cổng)",
+      "url": "https://www.paypal.com/signin"
+    },
+    {
+      "id": "82e80f59-8203-4fcf-ac80-2ad8441fef21",
+      "name": "Binance (Crypto)",
+      "url": "https://accounts.binance.com/en/login"
+    },
+    {
+      "id": "b7286bf5-b55b-4d05-b1fb-cb7481803260",
+      "name": "Bybit (Crypto)",
+      "url": "https://www.bybit.com/login"
+    },
+    {
+      "id": "660fe5ef-f461-4fdf-8022-4158cc0db0fe",
+      "name": "Huobi (Crypto)",
+      "url": "https://www.htx.com/en-us/login/"
+    },
+    {
+      "id": "0383eb9b-6c1f-4014-9699-de3c03166908",
+      "name": "RD Wallet (Ví)",
+      "url": "https://rdwallet.com/"
+    },
+    {
+      "id": "d9a3595e-c043-40b5-aa5c-0f8ce51483d5",
+      "name": "Tiền mặt",
+      "url": ""
+    },
+    {
+      "id": "bbef75b9-d895-4a77-8233-73151fa9732b",
+      "name": "Airwallex (Ví & Cổng)",
+      "url": "https://www.airwallex.com/login"
+    },
+    {
+      "id": "801380f6-e522-4523-bb1d-555b1a562fc2",
+      "name": "Auxpay (Ví & Cổng)",
+      "url": "https://auxpay.net/"
+    },
+    {
+      "id": "0ca2493f-767c-437d-8072-1a230ab980a0",
+      "name": "Revolut (Ví)",
+      "url": "https://app.revolut.com/login"
+    },
+    {
+      "id": "80c6da63-06e7-4c12-a8fe-543f5765c8cd",
+      "name": "PayZ (Ví & Cổng)",
+      "url": "https://www.payz.com/"
+    },
+    {
+      "id": "d7ea4ecb-0dcb-4813-8c84-a381a181c364",
+      "name": "Neteller (Ví)",
+      "url": "https://member.neteller.com/"
+    },
+    {
+      "id": "327fb56c-5215-4f5c-8fab-b0d7042b3301",
+      "name": "Skrill (Ví)",
+      "url": "https://account.skrill.com/"
+    },
+    {
+      "id": "ee53f5be-4dee-40a2-ba59-0c54b8ea1b3e",
+      "name": "Monese (Ví)",
+      "url": "https://monese.com/"
+    },
+    {
+      "id": "217cc1d8-8e43-43de-bbfa-df4456335481",
+      "name": "Paysera (Ví)",
+      "url": "https://bank.paysera.com/en/login"
+    },
+    {
+      "id": "7db0d252-cdff-4534-b589-5e4300d7d69e",
+      "name": "OFX Money Transfer (Ví)",
+      "url": "https://www.ofx.com/login/"
+    },
+    {
+      "id": "75227e2f-22db-4750-8732-251473f16d95",
+      "name": "Paysend (Ví)",
+      "url": "https://paysend.com/auth"
+    },
+    {
+      "id": "f6aa790b-67dc-46d6-8c34-4fba530cfef4",
+      "name": "Global66 (Ví)",
+      "url": "https://app.global66.com/login"
+    },
+    {
+      "id": "3ce993b5-80e9-4cf8-a58d-2da3dd279fa8",
+      "name": "WorldRemit (Ví)",
+      "url": "https://www.worldremit.com/en/login"
+    },
+    {
+      "id": "1bbf922b-ee11-4ae4-aff0-3e8968db5b25",
+      "name": "KOHO (Ví)",
+      "url": "https://web.koho.ca/login"
+    },
+    {
+      "id": "89a0e69e-4ff0-4ac8-8505-392dbc3c2c88",
+      "name": "Yuh (Ví)",
+      "url": "https://www.yuh.com/"
+    },
+    {
+      "id": "ba82bd86-e596-4ad5-bcc6-7de0323c97ff",
+      "name": "Gopay (Ví)",
+      "url": "https://gopay.co.id/"
+    },
+    {
+      "id": "cba84907-f9df-4cc4-8b14-187fc7562fd5",
+      "name": "COSMO payment (Ví)",
+      "url": "https://www.cosmopayment.com/login"
+    },
+    {
+      "id": "5627181b-a9ec-420f-ba73-922224d03065",
+      "name": "MoneyGram (Ví)",
+      "url": "https://www.moneygram.com/mgo/us/en/login/"
+    },
+    {
+      "id": "71f01d93-ff7c-4e25-8ee9-f9507a304373",
+      "name": "Octopus (Ví)",
+      "url": "https://www.octopus.com.hk/en/consumer/"
+    },
+    {
+      "id": "4bd32517-6c8a-424a-a86c-4ae9eb59d5b8",
+      "name": "Conotoxia (Ví)",
+      "url": "https://cinkciarz.pl/en/login"
+    },
+    {
+      "id": "b55c5683-5d6f-4692-bc93-409b7ed635ce",
+      "name": "Payday (Ví)",
+      "url": "https://payday.com/"
+    },
+    {
+      "id": "bac2ab4b-bf77-47b2-9fe2-4b6c2067edb5",
+      "name": "Sadapay (Ví)",
+      "url": "https://sadapay.pk/"
+    },
+    {
+      "id": "6c1e4dcb-4330-4593-a5fa-c47787611381",
+      "name": "Interac e-transfer (Ví)",
+      "url": "https://www.interac.ca/"
+    },
+    {
+      "id": "67506746-21b4-40a7-b746-a54502cf5e2d",
+      "name": "RBC Wallet (Ví)",
+      "url": "https://www.rbcroyalbank.com/onlinebanking/"
+    },
+    {
+      "id": "e77bc70a-0ef3-477d-bac1-3e0764c3d34f",
+      "name": "Scotiabank (Ví)",
+      "url": "https://www.scotiabank.com/"
+    },
+    {
+      "id": "42e24837-8b52-4fe3-86a4-353d62a30d5e",
+      "name": "TC US Dollar (Ví)",
+      "url": ""
+    },
+    {
+      "id": "6862b9c4-1338-4a77-9316-4dc5f9ded500",
+      "name": "CIBC (Ví)",
+      "url": "https://www.cibc.com/"
+    },
+    {
+      "id": "c8d77083-907a-4808-b4cd-6cd40cab7bc5",
+      "name": "SOLDO (Ví)",
+      "url": "https://manage.soldo.com/"
+    },
+    {
+      "id": "9dfff27c-fec2-4ffb-bbe0-9d9cfaa94c4f",
+      "name": "Silkpay (Ví & Cổng)",
+      "url": "https://www.silkpay.eu/"
+    },
+    {
+      "id": "0e3f38dc-2df4-4c6a-8022-3e751f828cb4",
+      "name": "Alipayplus (Ví)",
+      "url": "https://www.alipayplus.com/"
+    },
+    {
+      "id": "35760fee-8bb4-4859-a5cf-310a720e5390",
+      "name": "Currenxie (Ví)",
+      "url": "https://currenxie.com/"
+    },
+    {
+      "id": "e57f67db-1d5a-4f07-8037-e33b519ea24b",
+      "name": "Ria (Ví)",
+      "url": "https://www.riamoneytransfer.com/"
+    },
+    {
+      "id": "0457d043-5a14-4690-a278-9ef89697b70e",
+      "name": "OFX (Crypto)",
+      "url": "https://www.ofx.com/"
+    },
+    {
+      "id": "a4d66ec6-7958-4c4c-99ad-d59298e3da67",
+      "name": "GEO Swift (Ví)",
+      "url": "https://www.geoswift.com/"
+    },
+    {
+      "id": "06d70316-b187-4983-ae60-f98b2b5236a8",
+      "name": "terrapay (Ví)",
+      "url": "https://www.terrapay.com/"
+    },
+    {
+      "id": "54cfce06-3da3-4071-b253-64909e333890",
+      "name": "finfan (Ví)",
+      "url": "https://finfan.vn/"
+    },
+    {
+      "id": "5bfe3f0f-2aae-44a7-8ad7-10a34d544313",
+      "name": "FasterPay (Ví)",
+      "url": "https://www.fasterpay.com/login"
+    },
+    {
+      "id": "93ff740d-eaf2-4bdd-9376-32f3c877f288",
+      "name": "Sunrate (Thẻ+ví)",
+      "url": "https://www.sunrate.com/"
+    },
+    {
+      "id": "e50dd341-22c0-46a7-8111-e494c2c1a72e",
+      "name": "CASH APP (Ví)",
+      "url": "https://cash.app/login"
+    },
+    {
+      "id": "98baf290-b651-4acc-ae81-c65e16496f55",
+      "name": "Pomelo (Ví)",
+      "url": "https://pomelo.la/"
+    },
+    {
+      "id": "d747808b-a314-4d08-8af5-6d9898fae964",
+      "name": "J-Pay (Ví)",
+      "url": "https://www.jpay.com/"
+    },
+    {
+      "id": "8e198341-6842-4c12-b510-a581b80bd6d4",
+      "name": "Trust Wallet (Crypto)",
+      "url": "https://trustwallet.com/"
+    },
+    {
+      "id": "0672d9d8-de81-4863-abc4-d503464700eb",
+      "name": "Payful (Ví+Cổng+Thẻ)",
+      "url": ""
+    },
+    {
+      "id": "5b6c8252-cacc-4c56-9bc9-f4efb04780e9",
+      "name": "UQPAY (Ví+Cổng+Thẻ)",
+      "url": "https://www.uqpay.com/"
+    },
+    {
+      "id": "570fee02-b3dc-4824-9154-1f7139ad3854",
+      "name": "SKYPAY (Ví+Cổng+Thẻ)",
+      "url": ""
+    },
+    {
+      "id": "58d89f54-1f72-43ac-b804-09adabbfdc7e",
+      "name": "PEXX (Ví+Cổng+Thẻ)",
+      "url": "https://pexx.com/"
+    },
+    {
+      "id": "b2d5c91d-a7fd-4af7-8601-0c102cfee6bf",
+      "name": "Flagright (Ví+Cổng+Thẻ)",
+      "url": "https://flagright.com/"
+    },
+    {
+      "id": "4860633a-217e-4f2a-b6f8-02f5621b987f",
+      "name": "Monetapay (Ví+Cổng+Thẻ)",
+      "url": "https://monetapay.com/"
+    },
+    {
+      "id": "90a7f203-4cec-4091-9fc5-323140169568",
+      "name": "DeCard (Thẻ+ví)",
+      "url": "https://decard.io/"
+    },
+    {
+      "id": "43b898ba-87f5-447e-bb7e-b4e87f56a08d",
+      "name": "Paymentology (Ví & Cổng)",
+      "url": "https://www.paymentology.com/"
+    },
+    {
+      "id": "aadd4ebc-b98a-46f7-ab68-83e35053deed",
+      "name": "Digit9 (Ví & Cổng)",
+      "url": ""
+    },
+    {
+      "id": "cc7d80b2-e23d-4bff-a10a-1001c3411cc1",
+      "name": "Coocon (Ví & Cổng)",
+      "url": "https://coocon.net/"
+    }
+  ],
+  "users": [
+    {
+      "id": "super-admin-01",
+      "username": "admin",
+      "password": "admin",
+      "role": "super_admin"
+    },
+    {
+      "id": "936ed543-3529-4485-a7a7-f9c99a40ea16",
+      "username": "kien",
+      "password": "kien",
+      "role": "staff"
+    }
+  ]
+}
