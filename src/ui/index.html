@@ -1191,6 +1191,34 @@
             </div>
         </div>
 
+        <!-- View: Users (RBAC v2) -->
+        <div id="view-users" class="view-section" style="display:none;">
+            <div class="header">
+                <div style="display:flex; align-items:center; gap:20px;">
+                    <h2>User Management</h2>
+                    <input type="text" class="form-control" style="width:200px;" placeholder="Search users..."
+                        onkeyup="filterTable(this, 'userTableBody')">
+                </div>
+                <button id="btn-add-user" class="btn" onclick="openAddUserModal()">
+                    <i class="fa-solid fa-user-plus"></i> Add User
+                </button>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Username</th>
+                            <th>Role</th>
+                            <th>Managed By</th>
+                            <th>Assigned Accounts</th>
+                            <th style="text-align:right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="userTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+
         <!-- View: Database -->
         <div id="view-database" class="view-section" style="display:none;">
             <div class="header">
@@ -1573,40 +1601,11 @@
         </div>
     </div>
 
-    <!-- User Modal -->
-    <div class="modal" id="userModal">
-        <div class="modal-content" style="width: 400px; height: auto;">
-            <div class="modal-header">
-                <h3>System User</h3>
-                <button onclick="closeModal('userModal')"
-                    style="background:none; border:none; color:white; font-size:18px;">&times;</button>
-            </div>
-            <div class="modal-body" style="padding:20px; display:block;">
-                <div class="form-group">
-                    <label>Username</label>
-                    <input type="text" class="form-control" id="uName">
-                </div>
-                <div class="form-group">
-                    <label>Password</label>
-                    <input type="text" class="form-control" id="uPass">
-                </div>
-                <div class="form-group">
-                    <label>Role</label>
-                    <select class="form-control" id="uRole">
-                        <option value="staff">Staff (Launch Only)</option>
-                        <option value="admin">Admin (Manage Profiles)</option>
-                        <option value="super_admin">Super Admin (Full Access)</option>
-                    </select>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="saveUser()">Save User</button>
-            </div>
-        </div>
-    </div>
 
-    <script src="renderer.js"></script>
-    <!-- Bulk Assign Modal -->
+    <!-- Old user modal removed - using new modal with Managed By support at bottom of file -->
+
+
+    <!-- Script tags moved to bottom of file before closing body tag -->
     <div class="modal" id="bulkAssignModal">
         <div class="modal-content" style="width: 500px;">
             <div class="modal-header">
@@ -1648,7 +1647,149 @@
         </div>
     </div>
 
-    <script src="renderer.js"></script>
+    <!-- User Modal (RBAC v2) -->
+    <div id="modalUser" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="userModalTitle">Add New User</h3>
+            </div>
+            <div>
+                <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" id="userUsername" class="form-control">
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="userPassword" class="form-control" placeholder="Required for new users">
+                </div>
+                <div class="form-group">
+                    <label>Role</label>
+                    <select id="userRole" class="form-control">
+                        <option value="staff">Staff</option>
+                    </select>
+                </div>
+                <div class="form-group" id="assignToAdminGroup" style="display:none;">
+                    <label>Assign to Admin</label>
+                    <select id="userAssignToAdmin" class="form-control">
+                        <option value="">Unassigned</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeUserModal()">Cancel</button>
+                <button class="btn" onclick="saveUser()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Transfer Ownership Modal -->
+    <div id="modalTransfer" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Transfer Staff User</h3>
+            </div>
+            <div>
+                <div class="form-group">
+                    <label>User</label>
+                    <input type="text" id="transferUsername" class="form-control" disabled>
+                </div>
+                <div class="form-group">
+                    <label>Currently managed by</label>
+                    <input type="text" id="transferCurrentAdmin" class="form-control" disabled>
+                </div>
+                <div class="form-group">
+                    <label>Transfer to</label>
+                    <select id="transferNewAdmin" class="form-control">
+                        <option value="">Unassigned</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeTransferModal()">Cancel</button>
+                <button class="btn" onclick="executeTransfer()">Transfer</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Assigned Accounts Modal -->
+    <!-- User Modal -->
+    <div id="modalUser" class="modal">
+        <div class="modal-content">
+            <h3 id="userModalTitle">Add User</h3>
+
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" id="userUsername" placeholder="Enter username">
+            </div>
+
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="userPassword" placeholder="Enter password">
+            </div>
+
+            <div class="form-group">
+                <label>Role</label>
+                <select id="userRole">
+                    <!-- Populated dynamically -->
+                </select>
+            </div>
+
+            <!-- Assign to Admin (Super Admin only, visible when role=staff) -->
+            <div class="form-group" id="assignToAdminGroup" style="display:none">
+                <label>Assign to Admin (Optional)</label>
+                <select id="userAssignToAdmin">
+                    <option value="">Unassigned</option>
+                    <!-- Populated dynamically -->
+                </select>
+            </div>
+
+            <!-- Managed By (Super Admin only, visible when role=staff) - Legacy, may not be used -->
+            <div class="form-group" id="managedByContainer" style="display:none">
+                <label>Managed By (Admin)</label>
+                <select id="userManagedBy">
+                    <option value="">Unassigned</option>
+                    <!-- Populated with admin list -->
+                </select>
+            </div>
+
+            <div style="display:flex; gap:10px; margin-top:20px">
+                <button class="btn" onclick="saveUser()">Save</button>
+                <button class="btn btn-secondary" onclick="closeUserModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Assigned Accounts Modal - Fixed position overlay (MUST be outside modalUser!) -->
+    <div id="modalAssignedAccounts"
+        style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index:1000;">
+        <div class="modal-content">
+            <h3>Assigned Accounts for <span id="assignedAccountsUsername"></span></h3>
+
+            <div id="assignAccountsButtonContainer"></div>
+
+            <!-- Dropdown for assigning more accounts -->
+            <div id="assignAccountsDropdown"
+                style="display:none; margin-bottom:16px; padding:16px; background:var(--bg-panel); border:1px solid var(--border); border-radius:6px;">
+                <label style="display:block; margin-bottom:8px; font-weight:600;">Select Accounts to
+                    Assign:</label>
+                <select id="assignAccountsSelect" multiple
+                    style="width:100%; min-height:120px; margin-bottom:12px; padding:8px;">
+                    <!-- Populated dynamically -->
+                </select>
+                <div style="display:flex; gap:10px;">
+                    <button class="btn" onclick="executeAssign()">Assign Selected</button>
+                    <button class="btn btn-secondary" onclick="cancelAssign()">Cancel</button>
+                </div>
+            </div>
+
+            <ul id="assignedAccountsList" style="list-style:none; padding:0; margin:16px 0;"></ul>
+
+            <button class="btn btn-secondary" onclick="closeAssignedAccountsModal()">Close</button>
+        </div>
+    </div>
+
+    <script src="user_management.js?v=20260118-2"></script>
+    <script src="renderer.js?v=20260118-2"></script>
 </body>
 
 </html>

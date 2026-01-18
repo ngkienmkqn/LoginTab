@@ -10,6 +10,111 @@ const { v4: uuidv4 } = require('uuid');
 
 const SESSIONS_DIR = path.join(app.getPath('userData'), 'sessions');
 
+// ==================== RBAC v2: Session Management ====================
+global.currentAuthUser = null; // { id, username, role }
+
+// ==================== RBAC v2: Audit Logging ====================
+async function auditLog(action, userId, details) {
+    try {
+        const pool = await getPool();
+        await pool.execute(
+            `INSERT INTO audit_log (action, user_id, target_user_id, details, timestamp) 
+             VALUES (?, ?, ?, ?, NOW())`,
+            [
+                action,
+                userId,
+                details.targetUserId || null,
+                JSON.stringify(details)
+            ]
+        );
+        console.log(`[AUDIT] ${action} by ${userId}:`, details);
+    } catch (error) {
+        console.error('[AUDIT] Failed to log:', error);
+    }
+}
+
+// ==================== RBAC v2: Authorization Helpers ====================
+
+// Helper: Check if caller has scope access to target user
+async function checkScope(caller, target) {
+    if (caller.role === 'super_admin') return true;
+    if (caller.role === 'admin') {
+        // Admin can access: managed staff + self
+        if (target.id === caller.id) return true;
+        return target.managed_by_admin_id === caller.id;
+    }
+    return false; // Staff cannot manage users
+}
+
+// Helper: Check if user has specific permission (override > role default)
+async function checkPermission(userId, permissionKey) {
+    try {
+        const pool = await getPool();
+
+        // Check for override first
+        const [overrides] = await pool.query(
+            'SELECT enabled FROM user_permissions WHERE user_id = ? AND permission_key = ?',
+            [userId, permissionKey]
+        );
+
+        if (overrides.length > 0) {
+            return overrides[0].enabled === 1;
+        }
+
+        // Fall back to role defaults
+        const [users] = await pool.query('SELECT role FROM users WHERE id = ?', [userId]);
+        if (users.length === 0) return false;
+
+        const role = users[0].role;
+        const roleDefaults = {
+            super_admin: ['users.view', 'users.edit', 'users.delete', 'users.create', 'accounts.view', 'accounts.edit', 'accounts.delete', 'accounts.create'],
+            admin: ['users.view', 'users.edit', 'users.create', 'accounts.view', 'accounts.edit', 'accounts.create'],
+            staff: ['accounts.view']
+        };
+
+        return (roleDefaults[role] || []).includes(permissionKey);
+    } catch (error) {
+        console.error('[Permission] Check failed:', error);
+        return false;
+    }
+}
+
+// Helper: Combined authorization check (scope + permission)
+async function authorize(callerId, action, targetId) {
+    try {
+        const pool = await getPool();
+        const [callers] = await pool.query('SELECT * FROM users WHERE id = ?', [callerId]);
+        if (callers.length === 0) return false;
+
+        const caller = callers[0];
+
+        // Step 1: Scope Gate (if target is specified)
+        if (targetId) {
+            const [targets] = await pool.query('SELECT * FROM users WHERE id = ?', [targetId]);
+            if (targets.length === 0) return false;
+
+            const target = targets[0];
+            const hasScope = await checkScope(caller, target);
+            if (!hasScope) {
+                console.log('[Auth] Denied: Target out of scope');
+                return false;
+            }
+        }
+
+        // Step 2: Permission Check
+        const hasPermission = await checkPermission(callerId, action);
+        if (!hasPermission) {
+            console.log('[Auth] Denied: Missing permission');
+            return false;
+        }
+
+        return true;
+    } catch (error) {
+        console.error('[Auth] Error:', error);
+        return false;
+    }
+}
+
 let mainWindow;
 let tray = null;
 let isQuitting = false;
@@ -80,6 +185,13 @@ async function createWindow() {
     mainWindow.once('ready-to-show', () => {
         mainWindow.show();
         // DevTools behavior controlled by login role now
+    });
+
+    // Emit window-focused event for input focus recovery
+    mainWindow.on('focus', () => {
+        if (mainWindow && mainWindow.webContents) {
+            mainWindow.webContents.send('window-focused');
+        }
     });
 
     // Intercept close to hide in tray
@@ -285,9 +397,19 @@ app.on('window-all-closed', () => {
 // --- IPC HANDLERS ---
 
 // Get all accounts (With assigned users info)
-ipcMain.handle('get-accounts', async (event, user) => {
+// REMOVED: Duplicate handler - see RBAC v2 version at line ~980
+/*
+ipcMain.handle('get-accounts', async (event) => {
+    const callerId = global.currentAuthUser?.id;
+    if (!callerId) throw new Error('Not authenticated');
+
     try {
         const pool = await getPool();
+        const [callers] = await pool.query('SELECT * FROM users WHERE id = ?', [callerId]);
+        if (callers.length === 0) throw new Error('User not found');
+
+        const user = callers[0];
+
         let query = `
             SELECT a.*, 
             (SELECT GROUP_CONCAT(u.username SEPARATOR ', ') 
@@ -298,7 +420,7 @@ ipcMain.handle('get-accounts', async (event, user) => {
         `;
         let params = [];
 
-        if (user && user.role === 'staff') {
+        if (user.role === 'staff') {
             query = `
                 SELECT a.*, 
                 (SELECT GROUP_CONCAT(u.username SEPARATOR ', ') 
@@ -327,6 +449,7 @@ ipcMain.handle('get-accounts', async (event, user) => {
         return [];
     }
 });
+*/
 
 // Manage Assignments
 ipcMain.handle('get-assignments', async (event, userId) => {
@@ -412,33 +535,55 @@ ipcMain.handle('bulk-revoke', async (event, { accountIds, userIds }) => {
 
 // Create new account
 ipcMain.handle('create-account', async (event, { name, loginUrl, proxy, fingerprint, auth, extensionsPath, notes, platformId, workflowId }) => {
-    try {
-        const pool = await getPool();
-        const id = uuidv4();
-        const newAccount = {
-            id,
-            name,
-            loginUrl: loginUrl || '',
-            extensions_path: extensionsPath || '',
-            proxy_config: JSON.stringify(proxy || {}),
-            fingerprint_config: JSON.stringify(FingerprintGenerator.generateFingerprint(id)), // Generate IMMEDIATELY
-            auth_config: JSON.stringify(auth || {}),
-            lastActive: null,
-            notes: notes || '',
-            platform_id: platformId || null,
-            workflow_id: workflowId || null
-        };
+    // Retry logic for network errors
+    const maxRetries = 3;
+    let lastError = null;
 
-        await pool.query(
-            'INSERT INTO accounts (id, name, loginUrl, proxy_config, auth_config, fingerprint_config, extensions_path, lastActive, notes, platform_id, workflow_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [id, newAccount.name, newAccount.loginUrl, newAccount.proxy_config, newAccount.auth_config, newAccount.fingerprint_config, newAccount.extensions_path, newAccount.lastActive, newAccount.notes, newAccount.platform_id, newAccount.workflow_id]
-        );
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const pool = await getPool();
+            const id = uuidv4();
+            const newAccount = {
+                id,
+                name,
+                loginUrl: loginUrl || '',
+                extensions_path: extensionsPath || '',
+                proxy_config: JSON.stringify(proxy || {}),
+                fingerprint_config: JSON.stringify(FingerprintGenerator.generateFingerprint(id)), // Generate IMMEDIATELY
+                auth_config: JSON.stringify(auth || {}),
+                lastActive: null,
+                notes: notes || '',
+                platform_id: platformId || null,
+                workflow_id: workflowId || null
+            };
 
-        return { success: true, account: { ...newAccount, proxy, fingerprint, auth } };
-    } catch (error) {
-        console.error('Create failed:', error);
-        return { success: false, error: error.message };
+            await pool.query(
+                'INSERT INTO accounts (id, name, loginUrl, proxy_config, auth_config, fingerprint_config, extensions_path, lastActive, notes, platform_id, workflow_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [id, newAccount.name, newAccount.loginUrl, newAccount.proxy_config, newAccount.auth_config, newAccount.fingerprint_config, newAccount.extensions_path, newAccount.lastActive, newAccount.notes, newAccount.platform_id, newAccount.workflow_id]
+            );
+
+            console.log(`[create-account] ✓ Profile created successfully: ${name}`);
+            return { success: true, account: { ...newAccount, proxy, fingerprint, auth } };
+
+        } catch (error) {
+            lastError = error;
+
+            // Retry on network errors
+            if ((error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT' || error.code === 'ENOTFOUND') && attempt < maxRetries) {
+                console.log(`[create-account] Network error (attempt ${attempt}/${maxRetries}), retrying in 1s...`);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                continue;
+            }
+
+            // Non-retryable error or max retries reached
+            console.error('[create-account] Failed:', error);
+            return { success: false, error: error.message || 'Failed to create profile' };
+        }
     }
+
+    // All retries failed
+    console.error('[create-account] All retries exhausted');
+    return { success: false, error: lastError?.message || 'Failed to create profile after retries' };
 });
 
 // Update existing account
@@ -524,6 +669,37 @@ ipcMain.handle('delete-proxy', async (event, id) => {
         await pool.query('DELETE FROM proxies WHERE id = ?', [id]);
         return { success: true };
     } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('delete-user', async (event, userId) => {
+    const callerId = global.currentAuthUser?.id;
+    if (!callerId) throw new Error('Not authenticated');
+
+    try {
+        const pool = await getPool();
+
+        // Authorization check
+        const authorized = await authorize(callerId, 'users.delete', userId);
+        if (!authorized) {
+            throw new Error('Unauthorized: Cannot delete this user');
+        }
+
+        // Get target user for audit
+        const [targets] = await pool.query('SELECT username FROM users WHERE id = ?', [userId]);
+        const targetUsername = targets[0]?.username || 'unknown';
+
+        await pool.query('DELETE FROM users WHERE id = ?', [userId]);
+
+        await auditLog('delete_user', callerId, {
+            targetUserId: userId,
+            username: targetUsername
+        });
+
+        return { success: true };
+    } catch (error) {
+        console.error('[delete-user] Error:', error);
         return { success: false, error: error.message };
     }
 });
@@ -707,8 +883,46 @@ ipcMain.handle('launch-browser', async (event, arg) => {
 
 // Delete Account
 ipcMain.handle('delete-account', async (event, accountId) => {
+    const callerId = global.currentAuthUser?.id;
+    if (!callerId) throw new Error('Not authenticated');
+
     try {
         const pool = await getPool();
+
+        // STEP 1: SCOPE GATE - Check account ownership/assignment
+        const [callers] = await pool.query('SELECT * FROM users WHERE id = ?', [callerId]);
+        if (callers.length === 0) throw new Error('User not found');
+        const caller = callers[0];
+
+        if (caller.role === 'staff') {
+            // Staff can only delete accounts assigned to them
+            const [assignments] = await pool.query(
+                'SELECT * FROM account_assignments WHERE account_id = ? AND user_id = ?',
+                [accountId, callerId]
+            );
+            if (assignments.length === 0) {
+                throw new Error('Access denied: Account not assigned to you');
+            }
+        } else if (caller.role === 'admin') {
+            // Admin can only delete accounts assigned to managed staff OR assigned to self
+            const [accounts] = await pool.query(
+                `SELECT a.* FROM accounts a
+                 JOIN account_assignments aa ON a.id = aa.account_id
+                 LEFT JOIN users u ON aa.user_id = u.id
+                 WHERE a.id = ? AND (u.managed_by_admin_id = ? OR aa.user_id = ?)`,
+                [accountId, callerId, callerId]
+            );
+            if (accounts.length === 0) {
+                throw new Error('Access denied: Account out of scope');
+            }
+        }
+        // Super Admin can delete any account (no scope restriction)
+
+        // STEP 2: PERMISSION CHECK
+        const hasPermission = await checkPermission(callerId, 'accounts.delete');
+        if (!hasPermission) {
+            throw new Error('Unauthorized: Missing accounts.delete permission');
+        }
 
         // Delete account record
         await pool.query('DELETE FROM accounts WHERE id = ?', [accountId]);
@@ -721,6 +935,10 @@ ipcMain.handle('delete-account', async (event, accountId) => {
         const sessionPath = path.join(SESSIONS_DIR, accountId);
         await fs.remove(sessionPath);
         console.log(`[Delete] Removed local session folder: ${sessionPath}`);
+
+        await auditLog('delete_account', callerId, {
+            targetAccountId: accountId
+        });
 
         return { success: true };
     } catch (error) {
@@ -745,6 +963,11 @@ ipcMain.handle('auth-login', async (event, { username, password }) => {
             } else {
                 user = rows[0];
             }
+
+            // RBAC v2: Set global session
+            global.currentAuthUser = { id: user.id, username: user.username, role: user.role };
+            console.log('[Auth] Login successful:', global.currentAuthUser);
+
             return { success: true, user: { id: user.id, username: user.username, role: user.role } };
         }
 
@@ -752,6 +975,11 @@ ipcMain.handle('auth-login', async (event, { username, password }) => {
         const [rows] = await pool.query('SELECT * FROM users WHERE username = ? AND password = ?', [username, password]);
         if (rows.length > 0) {
             const user = rows[0];
+
+            // RBAC v2: Set global session
+            global.currentAuthUser = { id: user.id, username: user.username, role: user.role };
+            console.log('[Auth] Login successful:', global.currentAuthUser);
+
             return { success: true, user: { id: user.id, username: user.username, role: user.role } };
         }
 
@@ -762,59 +990,644 @@ ipcMain.handle('auth-login', async (event, { username, password }) => {
     }
 });
 
+// RBAC v2: Logout handler
+ipcMain.handle('auth-logout', async (event) => {
+    console.log('[Auth] Logout:', global.currentAuthUser);
+    global.currentAuthUser = null;
+    return { success: true };
+});
+
 // --- USER MANAGEMENT (RBAC) ---
 
-ipcMain.handle('get-users', async () => {
+// ==================== RBAC v2: Account Scoping ====================
+
+// Get Accounts (Scoped by Role)
+ipcMain.handle('get-accounts', async () => {
+    const callerId = global.currentAuthUser?.id;
+    if (!callerId) throw new Error('Not authenticated');
+
     try {
         const pool = await getPool();
-        const [rows] = await pool.query('SELECT id, username, role FROM users');
-        return rows;
+        const [callers] = await pool.query('SELECT * FROM users WHERE id = ?', [callerId]);
+        if (callers.length === 0) throw new Error('User not found');
+
+        const caller = callers[0];
+
+        let query, params;
+
+        if (caller.role === 'super_admin') {
+            // Super Admin sees ALL accounts
+            query = `
+                SELECT a.*, 
+                (SELECT GROUP_CONCAT(u.username SEPARATOR ', ') 
+                 FROM account_assignments aa 
+                 JOIN users u ON aa.user_id = u.id 
+                 WHERE aa.account_id = a.id) as assignedUsers
+                FROM accounts a
+            `;
+            params = [];
+        } else if (caller.role === 'admin') {
+            // Admin sees ONLY accounts assigned to managed staff + self
+            query = `
+                SELECT DISTINCT a.*,
+                (SELECT GROUP_CONCAT(u.username SEPARATOR ', ') 
+                 FROM account_assignments aa 
+                 JOIN users u ON aa.user_id = u.id 
+                 WHERE aa.account_id = a.id) as assignedUsers
+                FROM accounts a
+                LEFT JOIN account_assignments aa ON a.id = aa.account_id
+                WHERE aa.user_id IN (
+                    SELECT id FROM users 
+                    WHERE managed_by_admin_id = ? OR id = ?
+                )
+            `;
+            params = [callerId, callerId];
+        } else if (caller.role === 'staff') {
+            // Staff sees ONLY accounts assigned to self
+            query = `
+                SELECT a.*,
+                (SELECT GROUP_CONCAT(u.username SEPARATOR ', ') 
+                 FROM account_assignments aa 
+                 JOIN users u ON aa.user_id = u.id 
+                 WHERE aa.account_id = a.id) as assignedUsers
+                FROM accounts a
+                JOIN account_assignments aa ON a.id = aa.account_id
+                WHERE aa.user_id = ?
+            `;
+            params = [callerId];
+        } else {
+            // Unknown role
+            return [];
+        }
+
+        const [accounts] = await pool.query(query, params);
+
+        // Parse JSON configs (like old handler)
+        return accounts.map(row => ({
+            ...row,
+            assignedUsers: row.assignedUsers || 'None',
+            proxy: typeof row.proxy_config === 'string' ? JSON.parse(row.proxy_config) : row.proxy_config,
+            fingerprint: typeof row.fingerprint_config === 'string' ? JSON.parse(row.fingerprint_config) : row.fingerprint_config,
+            auth: typeof row.auth_config === 'string' ? JSON.parse(row.auth_config) : row.auth_config,
+            createdAt: row.createdAt,
+            lastActive: row.lastActive
+        }));
+
     } catch (error) {
-        return [];
+        console.error('[get-accounts] Error:', error);
+        throw error;
+    }
+});
+
+// Get Users (Scoped by Role)
+ipcMain.handle('get-users', async () => {
+    const callerId = global.currentAuthUser?.id;
+    if (!callerId) throw new Error('Not authenticated');
+
+    try {
+        const pool = await getPool();
+        const [callers] = await pool.query('SELECT * FROM users WHERE id = ?', [callerId]);
+        if (callers.length === 0) throw new Error('User not found');
+
+        const caller = callers[0];
+
+        // STEP 1: PERMISSION CHECK (users.view required for scope-first-then-permission)
+        const hasPermission = await checkPermission(callerId, 'users.view');
+        if (!hasPermission) {
+            throw new Error('Unauthorized: Missing users.view permission');
+        }
+
+        // STAFF DENIAL: Staff cannot access user management at backend
+        if (caller.role === 'staff') {
+            throw new Error('Access denied: Staff users cannot view user list');
+        }
+
+        // STEP 2: SCOPE GATE
+        let query, params;
+        if (caller.role === 'super_admin') {
+            // Super Admin sees ALL users with account counts
+            query = `
+                SELECT 
+                    u.id, 
+                    u.username, 
+                    u.role, 
+                    u.managed_by_admin_id,
+                    COUNT(DISTINCT aa.account_id) as assigned_accounts_count
+                FROM users u
+                LEFT JOIN account_assignments aa ON u.id = aa.user_id
+                GROUP BY u.id, u.username, u.role, u.managed_by_admin_id
+            `;
+            params = [];
+            const [rows] = await pool.query(query, params);
+            return rows;
+        } else if (caller.role === 'admin') {
+            // Admin sees: managed staff + self, with account counts
+            query = `
+                SELECT 
+                    u.id, 
+                    u.username, 
+                    u.role, 
+                    u.managed_by_admin_id,
+                    COUNT(DISTINCT aa.account_id) as assigned_accounts_count
+                FROM users u
+                LEFT JOIN account_assignments aa ON u.id = aa.user_id
+                WHERE u.managed_by_admin_id = ? OR u.id = ?
+                GROUP BY u.id, u.username, u.role, u.managed_by_admin_id
+            `;
+            params = [callerId, callerId];
+            const [rows] = await pool.query(query, params);
+            return rows;
+        } else {
+            // Staff cannot view users
+            return [];
+        }
+    } catch (error) {
+        console.error('[get-users] Error:', error);
+        throw error;
+    }
+});
+
+// Get User's Assigned Accounts
+ipcMain.handle('get-user-assigned-accounts', async (event, userId) => {
+    const callerId = global.currentAuthUser?.id;
+    console.log('[get-user-assigned-accounts] Called with userId:', userId, 'by caller:', callerId);
+    if (!callerId) throw new Error('Not authenticated');
+
+    try {
+        const pool = await getPool();
+        const [callers] = await pool.query('SELECT * FROM users WHERE id = ?', [callerId]);
+        if (callers.length === 0) throw new Error('User not found');
+
+        const caller = callers[0];
+
+        // AUTHORIZATION
+        if (caller.role !== 'super_admin') {
+            if (caller.role === 'admin') {
+                const [target] = await pool.query('SELECT * FROM users WHERE id = ?', [userId]);
+                if (!target[0] || (target[0].managed_by_admin_id !== callerId && target[0].id !== callerId)) {
+                    throw new Error('Access denied');
+                }
+            } else if (userId !== callerId) {
+                throw new Error('Access denied');
+            }
+        }
+
+        // Get accounts with full data
+        const [accounts] = await pool.query(`
+            SELECT 
+                a.id,
+                a.name AS profile_name,
+                a.loginUrl,
+                p.name AS platform_name
+            FROM accounts a
+            JOIN account_assignments aa ON a.id = aa.account_id
+            LEFT JOIN platforms p ON a.platform_id = p.id
+            WHERE aa.user_id = ?
+            ORDER BY a.name
+        `, [userId]);
+        console.log('[get-user-assigned-accounts] Found', accounts.length, 'accounts for user', userId);
+        return accounts;
+    } catch (error) {
+        console.error('[get-user-assigned-accounts] Error:', error);
+        throw error;
     }
 });
 
 ipcMain.handle('save-user', async (event, userData) => {
+    const callerId = global.currentAuthUser?.id;
+    if (!callerId) throw new Error('Not authenticated');
+
     try {
         const pool = await getPool();
+        const [callers] = await pool.query('SELECT * FROM users WHERE id = ?', [callerId]);
+        if (callers.length === 0) throw new Error('Caller not found');
+        const caller = callers[0];
+
+        // Authorization
+        if (caller.role === 'staff') {
+            throw new Error('Access denied: Staff users cannot manage other users');
+        }
+
+        // CREATE NEW USER
         if (!userData.id) {
-            const [exists] = await pool.query('SELECT * FROM users WHERE username = ?', [userData.username]);
-            if (exists.length > 0) return { success: false, error: 'Username already exists' };
+            // Admin can only create Staff
+            if (caller.role === 'admin' && userData.role !== 'staff') {
+                throw new Error('Admin can only create Staff users');
+            }
+
+            // Super Admin can create anyone
+            if (!userData.username || !userData.password) {
+                throw new Error('Username and password required for new user');
+            }
+
+            const newId = require('uuid').v4();
+
+            // Auto-assign managed_by for Admin creating Staff
+            let managed_by_admin_id = userData.managed_by_admin_id || null;
+            if (caller.role === 'admin' && userData.role === 'staff') {
+                managed_by_admin_id = callerId; // Auto-assign to creator
+            }
 
             await pool.query(
-                'INSERT INTO users (id, username, password, role) VALUES (?, ?, ?, ?)',
-                [uuidv4(), userData.username, userData.password, userData.role]
+                'INSERT INTO users (id, username, password, role, managed_by_admin_id) VALUES (?, ?, ?, ?, ?)',
+                [newId, userData.username, userData.password, userData.role, managed_by_admin_id]
             );
-        } else {
-            await pool.query(
-                'UPDATE users SET username = ?, password = ?, role = ? WHERE id = ?',
-                [userData.username, userData.password, userData.role, userData.id]
-            );
+
+            await auditLog('create_user', callerId, {
+                targetUserId: newId,
+                role: userData.role,
+                managed_by: managed_by_admin_id
+            });
+
+            return { success: true };
         }
-        return { success: true };
+        // UPDATE EXISTING USER
+        else {
+            // Check scope
+            const [targets] = await pool.query('SELECT * FROM users WHERE id = ?', [userData.id]);
+            if (targets.length === 0) throw new Error('User not found');
+            const target = targets[0];
+
+            // Admin can only edit their managed staff
+            if (caller.role === 'admin') {
+                if (target.role !== 'staff' || target.managed_by_admin_id !== callerId) {
+                    throw new Error('Admin can only edit their own managed Staff');
+                }
+            }
+
+            // Enforce: Only Super Admin can change role
+            if ('role' in userData && caller.role !== 'super_admin') {
+                throw new Error('Only Super Admin can change user roles');
+            }
+
+            // Build dynamic UPDATE query
+            let fieldsToUpdate = [];
+            let values = [];
+
+            if (userData.username) {
+                fieldsToUpdate.push('username = ?');
+                values.push(userData.username);
+            }
+
+            // Only update password if provided (not undefined/null)
+            if (userData.password) {
+                fieldsToUpdate.push('password = ?');
+                values.push(userData.password);
+            }
+
+            if (userData.role) {
+                fieldsToUpdate.push('role = ?');
+                values.push(userData.role);
+            }
+
+            // managed_by_admin_id (Super Admin only)
+            if (caller.role === 'super_admin' && 'managed_by_admin_id' in userData) {
+                fieldsToUpdate.push('managed_by_admin_id = ?');
+                values.push(userData.managed_by_admin_id || null);
+            }
+
+            if (fieldsToUpdate.length === 0) {
+                return { success: true }; // Nothing to update
+            }
+
+            values.push(userData.id); // WHERE id = ?
+
+            await pool.query(
+                `UPDATE users SET ${fieldsToUpdate.join(', ')} WHERE id = ?`,
+                values
+            );
+
+            await auditLog('edit_user', callerId, {
+                targetUserId: userData.id,
+                fields_updated: Object.keys(userData)
+            });
+
+            return { success: true };
+        }
     } catch (error) {
+        console.error('[save-user] Error:', error);
         return { success: false, error: error.message };
     }
 });
 
-// Delete User
-ipcMain.handle('delete-user', async (event, id) => {
+// ==================== RBAC v2: New Handlers ====================
+
+
+// ==================== RBAC v2: New Handlers ====================
+
+// Transfer User Ownership (Super Admin only) - Alias to match frontend call
+ipcMain.handle('transfer-user-ownership', async (event, payload) => {
+    // Frontend sends {userId, newAdminId}, backend expects same format
+    const callerId = global.currentAuthUser?.id;
+    if (!callerId) throw new Error('Not authenticated');
+
     try {
         const pool = await getPool();
-        // Prevent deleting default admin
-        const [rows] = await pool.query('SELECT * FROM users WHERE id = ?', [id]);
-        if (rows.length > 0) {
-            const user = rows[0];
-            if (user.role === 'super_admin' && user.username === 'admin') {
-                return { success: false, error: 'Cannot delete default Super Admin' };
+        const [callers] = await pool.query('SELECT * FROM users WHERE id = ?', [callerId]);
+        if (callers.length === 0 || callers[0].role !== 'super_admin') {
+            throw new Error('Only Super Admin can transfer ownership');
+        }
+
+        const { userId, newAdminId } = payload;
+
+        const [targets] = await pool.query('SELECT * FROM users WHERE id = ?', [userId]);
+        if (targets.length === 0) throw new Error('Target user not found');
+        if (targets[0].role !== 'staff') {
+            throw new Error('Only Staff users can be transferred');
+        }
+
+        if (newAdminId) {
+            const [admins] = await pool.query('SELECT * FROM users WHERE id = ?', [newAdminId]);
+            if (admins.length === 0 || admins[0].role !== 'admin') {
+                throw new Error('Target must be an Admin');
             }
         }
 
-        await pool.query('DELETE FROM users WHERE id = ?', [id]);
+        await pool.query('UPDATE users SET managed_by_admin_id = ? WHERE id = ?', [newAdminId || null, userId]);
+
+        await auditLog('transfer_ownership', callerId, {
+            targetUserId: userId,
+            from_admin: targets[0].managed_by_admin_id,
+            to_admin: newAdminId || 'unassigned'
+        });
+
         return { success: true };
     } catch (error) {
+        console.error('[transfer-user-ownership] Error:', error);
         return { success: false, error: error.message };
     }
+});
+
+// Transfer User Ownership (Super Admin only) - Original handler
+ipcMain.handle('transfer-user-to-admin', async (event, { userId, newAdminId }) => {
+    const callerId = global.currentAuthUser?.id;
+    if (!callerId) throw new Error('Not authenticated');
+
+    try {
+        const pool = await getPool();
+        const [callers] = await pool.query('SELECT * FROM users WHERE id = ?', [callerId]);
+        if (callers.length === 0 || callers[0].role !== 'super_admin') {
+            throw new Error('Only Super Admin can transfer ownership');
+        }
+
+        const [targets] = await pool.query('SELECT * FROM users WHERE id = ?', [userId]);
+        if (targets.length === 0) throw new Error('Target user not found');
+        if (targets[0].role !== 'staff') {
+            throw new Error('Only Staff users can be transferred');
+        }
+
+        if (newAdminId) {
+            const [admins] = await pool.query('SELECT * FROM users WHERE id = ?', [newAdminId]);
+            if (admins.length === 0 || admins[0].role !== 'admin') {
+                throw new Error('Target must be an Admin');
+            }
+        }
+
+        await pool.query('UPDATE users SET managed_by_admin_id = ? WHERE id = ?', [newAdminId || null, userId]);
+
+        // Audit log: differentiate transfer vs unassign
+        if (newAdminId) {
+            await auditLog('transfer_ownership', callerId, {
+                targetUserId: userId,
+                from_admin: targets[0].managed_by_admin_id,
+                to_admin: newAdminId
+            });
+        } else {
+            await auditLog('unassign_staff', callerId, {
+                targetUserId: userId,
+                from_admin: targets[0].managed_by_admin_id
+            });
+        }
+
+        return { success: true };
+    } catch (error) {
+        console.error('[transfer-user] Error:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Get Available Accounts for Assignment (Super Admin/Admin only)
+ipcMain.handle('get-available-accounts', async (event, userId) => {
+    const callerId = global.currentAuthUser?.id;
+    if (!callerId) throw new Error('Not authenticated');
+
+    try {
+        const pool = await getPool();
+        const [callers] = await pool.query('SELECT * FROM users WHERE id = ?', [callerId]);
+        if (callers.length === 0) throw new Error('User not found');
+
+        const caller = callers[0];
+
+        // AUTHORIZATION: Only Super Admin + Admin
+        if (caller.role === 'admin') {
+            // Admin can only assign to managed staff
+            const [target] = await pool.query('SELECT * FROM users WHERE id = ?', [userId]);
+            if (!target[0] || (target[0].managed_by_admin_id !== callerId && target[0].id !== callerId)) {
+                throw new Error('Access denied: Cannot manage this user');
+            }
+        } else if (caller.role !== 'super_admin') {
+            throw new Error('Access denied: Insufficient permissions');
+        }
+
+        // Get accounts NOT yet assigned to this user
+        let query, params;
+        if (caller.role === 'super_admin') {
+            // Super Admin: ALL unassigned accounts
+            query = `
+                SELECT a.*, p.name as platform_name
+                FROM accounts a
+                LEFT JOIN platforms p ON a.platform_id = p.id
+                WHERE a.id NOT IN (
+                    SELECT account_id FROM account_assignments WHERE user_id = ?
+                )
+                ORDER BY p.name, a.id
+            `;
+            params = [userId];
+        } else {
+            // Admin: Only accounts from managed staff pool (accounts assigned to managed users or self)
+            query = `
+                SELECT DISTINCT a.*, p.name as platform_name
+                FROM accounts a
+                LEFT JOIN platforms p ON a.platform_id = p.id
+                LEFT JOIN account_assignments aa ON a.id = aa.account_id
+                WHERE aa.user_id IN (
+                    SELECT id FROM users WHERE managed_by_admin_id = ? OR id = ?
+                )
+                AND a.id NOT IN (
+                    SELECT account_id FROM account_assignments WHERE user_id = ?
+                )
+                ORDER BY p.name, a.id
+            `;
+            params = [callerId, callerId, userId];
+        }
+
+        const [accounts] = await pool.query(query, params);
+
+        // Parse and return with profile names
+        return accounts.map(acc => ({
+            id: acc.id,
+            platform_name: acc.platform_name,
+            profile_name: (() => {
+                try {
+                    const auth = typeof acc.auth_config === 'string' ? JSON.parse(acc.auth_config) : acc.auth_config;
+                    return auth?.email || auth?.username || `Account #${acc.id.substring(0, 8)}`;
+                } catch {
+                    return `Account #${acc.id.substring(0, 8)}`;
+                }
+            })()
+        }));
+    } catch (error) {
+        console.error('[get-available-accounts] Error:', error);
+        throw error;
+    }
+});
+
+// Assign Accounts to User (Bulk Assignment)
+ipcMain.handle('assign-accounts', async (event, { userId, accountIds }) => {
+    const callerId = global.currentAuthUser?.id;
+    if (!callerId) throw new Error('Not authenticated');
+
+    try {
+        const pool = await getPool();
+        const [callers] = await pool.query('SELECT * FROM users WHERE id = ?', [callerId]);
+        if (callers.length === 0) throw new Error('User not found');
+
+        const caller = callers[0];
+
+        // AUTHORIZATION: Only Super Admin + Admin
+        if (caller.role === 'admin') {
+            const [target] = await pool.query('SELECT * FROM users WHERE id = ?', [userId]);
+            if (!target[0] || (target[0].managed_by_admin_id !== callerId && target[0].id !== callerId)) {
+                throw new Error('Access denied: Cannot manage this user');
+            }
+        } else if (caller.role !== 'super_admin') {
+            throw new Error('Access denied: Insufficient permissions');
+        }
+
+        // Bulk insert assignments (IGNORE duplicates)
+        const values = accountIds.map(accountId => [accountId, userId]);
+        await pool.query(
+            'INSERT IGNORE INTO account_assignments (account_id, user_id) VALUES ?',
+            [values]
+        );
+
+        // Audit log
+        await auditLog('assign_accounts', callerId, { userId, accountIds, count: accountIds.length });
+
+        return { success: true };
+    } catch (error) {
+        console.error('[assign-accounts] Error:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Get User Permissions
+ipcMain.handle('get-user-permissions', async (event, userId) => {
+    const callerId = global.currentAuthUser?.id;
+    if (!callerId) throw new Error('Not authenticated');
+
+    try {
+        const authorized = await authorize(callerId, 'users.view', userId);
+        if (!authorized) throw new Error('Access denied: Cannot view this user');
+
+        const pool = await getPool();
+        const [rows] = await pool.query(
+            'SELECT permission_key, enabled FROM user_permissions WHERE user_id = ?',
+            [userId]
+        );
+        return rows;
+    } catch (error) {
+        console.error('[get-user-permissions] Error:', error);
+        return [];
+    }
+});
+
+// Update User Permissions (with transaction)
+ipcMain.handle('update-user-permissions', async (event, userId, permissions) => {
+    const callerId = global.currentAuthUser?.id;
+    if (!callerId) throw new Error('Not authenticated');
+
+    try {
+        const authorized = await authorize(callerId, 'users.edit', userId);
+        if (!authorized) throw new Error('Access denied: Cannot edit this user');
+
+        const pool = await getPool();
+        const connection = await pool.getConnection();
+
+        try {
+            await connection.beginTransaction();
+
+            // DELETE all overrides
+            await connection.query('DELETE FROM user_permissions WHERE user_id = ?', [userId]);
+
+            // INSERT new ones
+            for (const perm of permissions) {
+                await connection.execute(
+                    'INSERT INTO user_permissions (id, user_id, permission_key, enabled) VALUES (?, ?, ?, ?)',
+                    [uuidv4(), userId, perm.permission_key, perm.enabled]
+                );
+            }
+
+            await connection.commit();
+
+            await auditLog('update_permissions', callerId, {
+                targetUserId: userId,
+                permissions_changed: permissions.map(p => p.permission_key)
+            });
+
+            return { success: true };
+        } catch (err) {
+            await connection.rollback();
+            throw err;
+        } finally {
+            connection.release();
+        }
+    } catch (error) {
+        console.error('[update-user-permissions] Error:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Clear User Permissions (Reset to role defaults)
+ipcMain.handle('clear-user-permissions', async (event, userId) => {
+    const callerId = global.currentAuthUser?.id;
+    if (!callerId) throw new Error('Not authenticated');
+
+    try {
+        const authorized = await authorize(callerId, 'users.edit', userId);
+        if (!authorized) throw new Error('Access denied');
+
+        const pool = await getPool();
+        await pool.query('DELETE FROM user_permissions WHERE user_id = ?', [userId]);
+
+        await auditLog('clear_permissions', callerId, { targetUserId: userId });
+
+        return { success: true };
+    } catch (error) {
+        console.error('[clear-user-permissions] Error:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Check Permission (UI only - does NOT check scope)
+ipcMain.handle('check-permission', async (event, permissionKey) => {
+    const callerId = global.currentAuthUser?.id;
+    if (!callerId) throw new Error('Not authenticated');
+
+    try {
+        return await checkPermission(callerId, permissionKey);
+    } catch (error) {
+        console.error('[check-permission] Error:', error);
+        return false;
+    }
+});
+
+// Helper for debug: Check if window is focused
+ipcMain.handle('is-window-focused', async (event) => {
+    const callerId = global.currentAuthUser?.id;
+    if (!callerId) throw new Error('Not authenticated');
+
+    return mainWindow?.isFocused() || false;
 });
 
 // Check Proxy Health
@@ -1091,3 +1904,4 @@ ipcMain.handle('start-element-picker', async () => {
         return { success: false, error: error.message };
     }
 });
+

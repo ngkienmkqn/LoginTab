@@ -152,6 +152,110 @@ async function initDB() {
             if (err.code !== 'ER_DUP_FIELDNAME') console.error('[MySQL] Migration error (automation_mode):', err.message);
         }
 
+        // ==================== RBAC v2 MIGRATIONS ====================
+
+        // Migration: Add managed_by_admin_id column to users table
+        try {
+            const [cols] = await connection.query(`
+                SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' 
+                AND COLUMN_NAME = 'managed_by_admin_id'
+            `);
+            if (cols.length === 0) {
+                await connection.query(`ALTER TABLE users ADD COLUMN managed_by_admin_id VARCHAR(36) DEFAULT NULL`);
+                console.log('[MySQL] Added managed_by_admin_id column to users table');
+            }
+        } catch (err) {
+            console.error('[MySQL] Migration error (managed_by_admin_id):', err.message);
+        }
+
+        // Migration: Add FK constraint for managed_by_admin_id
+        try {
+            // Check if FK already exists
+            const [fks] = await connection.query(`
+                SELECT CONSTRAINT_NAME 
+                FROM information_schema.TABLE_CONSTRAINTS 
+                WHERE TABLE_SCHEMA = DATABASE() 
+                AND TABLE_NAME = 'users' 
+                AND CONSTRAINT_NAME = 'fk_managed_by_admin'
+            `);
+
+            if (fks.length === 0) {
+                await connection.query(`
+                    ALTER TABLE users 
+                    ADD CONSTRAINT fk_managed_by_admin 
+                    FOREIGN KEY (managed_by_admin_id) REFERENCES users(id) ON DELETE SET NULL
+                `);
+                console.log('[MySQL] Added FK constraint for managed_by_admin_id');
+            }
+        } catch (err) {
+            console.error('[MySQL] Migration error (FK managed_by):', err.message);
+        }
+
+        // Migration: Add index for managed_by_admin_id (scope queries)
+        try {
+            // Check if index already exists
+            const [indexes] = await connection.query(`
+                SELECT INDEX_NAME 
+                FROM information_schema.STATISTICS 
+                WHERE TABLE_SCHEMA = DATABASE() 
+                AND TABLE_NAME = 'users' 
+                AND INDEX_NAME = 'idx_managed_by_admin'
+            `);
+
+            if (indexes.length === 0) {
+                await connection.query(`ALTER TABLE users ADD INDEX idx_managed_by_admin (managed_by_admin_id)`);
+                console.log('[MySQL] Added index for managed_by_admin_id');
+            }
+        } catch (err) {
+            console.error('[MySQL] Migration error (index managed_by):', err.message);
+        }
+
+        // Migration: Create user_permissions table
+        try {
+            await connection.query(`
+                CREATE TABLE IF NOT EXISTS user_permissions (
+                    id VARCHAR(36) PRIMARY KEY,
+                    user_id VARCHAR(36) NOT NULL,
+                    permission_key VARCHAR(100) NOT NULL,
+                    enabled BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY unique_user_permission (user_id, permission_key),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+            `);
+            const [tables] = await connection.query(`SHOW TABLES LIKE 'user_permissions'`);
+            if (tables.length > 0) {
+                console.log('[MySQL] user_permissions table ready');
+            }
+        } catch (err) {
+            console.error('[MySQL] Migration error (user_permissions):', err.message);
+        }
+
+        // Migration: Create audit_log table
+        try {
+            await connection.query(`
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    action VARCHAR(100) NOT NULL,
+                    user_id VARCHAR(36) NOT NULL,
+                    target_user_id VARCHAR(36),
+                    details JSON,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_user_id (user_id),
+                    INDEX idx_target_user_id (target_user_id),
+                    INDEX idx_action (action),
+                    INDEX idx_timestamp (timestamp)
+                )
+            `);
+            const [tables] = await connection.query(`SHOW TABLES LIKE 'audit_log'`);
+            if (tables.length > 0) {
+                console.log('[MySQL] audit_log table ready');
+            }
+        } catch (err) {
+            console.error('[MySQL] Migration error (audit_log):', err.message);
+        }
+
         // Seed Default Admin (Safe Insert)
         await connection.query("INSERT IGNORE INTO users (id, username, password, role) VALUES ('admin-id', 'admin', 'admin', 'super_admin')");
         console.log('[MySQL] Admin checked/seeded.');

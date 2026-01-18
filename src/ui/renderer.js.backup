@@ -1,9 +1,9 @@
-var { ipcRenderer } = require('electron');
+﻿var { ipcRenderer } = require('electron');
 console.log('Renderer.js loaded');
 
 // TEST: Verify script is running
 window.addEventListener('DOMContentLoaded', () => {
-    console.log('✓ DOM Content Loaded - Renderer.js is executing!');
+    console.log('âœ“ DOM Content Loaded - Renderer.js is executing!');
     setTimeout(() => {
         const loginBtn = document.querySelector('button[onclick="handleLogin()"]');
         console.log('Login button found:', !!loginBtn);
@@ -15,6 +15,29 @@ var jsQR = require('jsqr');
 var protobuf = require('protobufjs');
 var base32 = require('hi-base32');
 var Drawflow = require('./assets/libs/drawflow.min.js');
+
+// ==================== Electron Window Focus Recovery ====================
+let lastActiveInput = null;
+
+// Track last active input
+document.addEventListener('focusin', (e) => {
+    if (e.target.matches('input, textarea')) {
+        lastActiveInput = e.target;
+    }
+}, true);
+
+// Attempt to refocus on window focus
+ipcRenderer.on('window-focused', () => {
+    if (lastActiveInput && document.contains(lastActiveInput)) {
+        setTimeout(() => {
+            try {
+                lastActiveInput.focus();
+            } catch (e) {
+                console.warn('[Focus] Could not restore focus:', e);
+            }
+        }, 100);
+    }
+});
 
 // --- State ---
 var accounts = [];
@@ -84,7 +107,30 @@ var proxyHealthMap = {}; // id -> { score, label }
 
 // --- Init ---
 
-// Exports moved to end of file
+// --- GLOBAL EXPORTS (Hoisted) ---
+// We export these early so UI buttons work even if later code fails
+window.addNode = addNode;
+window.saveWorkflow = saveWorkflow;
+window.refreshWorkflowList = refreshWorkflowList;
+window.loadWorkflow = loadWorkflow;
+window.createNewWorkflow = createNewWorkflow;
+window.closeEditor = closeEditor;
+window.filterProfiles = filterProfiles;
+window.runAutomation = runAutomation;
+window.showEditor = showEditor;
+window.toggleNodeMenu = toggleNodeMenu;
+window.toggleTheme = toggleTheme;
+window.handleLogin = handleLogin;
+window.handleLogout = handleLogout;
+window.handleLogin = handleLogin;
+window.handleLogout = handleLogout;
+window.deleteWorkflow = deleteWorkflow;
+window.filterWorkflows = filterWorkflows; // Export filter function
+window.zoomIn = zoomIn;
+window.zoomOut = zoomOut;
+window.zoomReset = zoomReset;
+window.centerWorkflow = centerWorkflow;
+window.clearAllWorkflows = clearAllWorkflows;
 
 // Don't load data immediately. Wait for Login.
 // Check if already logged in (persistence could be added later, for now session based)
@@ -129,6 +175,9 @@ async function handleLogin() {
 }
 
 function handleLogout() {
+    // Call backend logout handler
+    ipcRenderer.invoke('auth-logout').catch(err => console.error('Logout error:', err));
+
     currentUser = null;
     document.getElementById('login-screen').style.display = 'flex';
     document.getElementById('loginUser').value = '';
@@ -154,12 +203,18 @@ function applyPermissions() {
     const autoTab = document.getElementById('nav-automations');
     const automationsTab = document.getElementById('nav-automations');
 
+    // Users tab: Super Admin + Admin can see
+    if (role === 'super_admin' || role === 'admin') {
+        if (userTab) userTab.style.display = 'flex';
+    } else {
+        if (userTab) userTab.style.display = 'none';
+    }
+
+    // Database + Automations: Super Admin only
     if (role === 'super_admin') {
-        if (userTab) userTab.style.display = 'block';
         if (dbTab) dbTab.style.display = 'flex';
         if (autoTab) autoTab.style.display = 'flex';
     } else {
-        if (userTab) userTab.style.display = 'none';
         if (dbTab) dbTab.style.display = 'none';
         if (autoTab) autoTab.style.display = 'none';
     }
@@ -190,7 +245,7 @@ async function loadAllData() {
     try {
         // 1. Profiles (Critical)
         try {
-            accounts = await ipcRenderer.invoke('get-accounts', currentUser);
+            accounts = await ipcRenderer.invoke('get-accounts');
         } catch (e) {
             console.error('Failed to load accounts:', e);
             alert('Critial: Failed to load accounts. ' + e.message);
@@ -273,13 +328,19 @@ function navigate(viewName) {
         if (clearBtn) clearBtn.style.display = 'none';
     }
 
+    if (viewName === 'users') {
+        if (typeof renderUserTable === 'function') {
+            renderUserTable();
+        }
+    }
+
     if (viewName === 'database') {
         loadDatabaseStats();
     }
 }
 
 async function clearAllWorkflows() {
-    const confirmed = confirm('⚠️ WARNING: This will DELETE ALL workflows permanently!\n\nAre you absolutely sure?');
+    const confirmed = confirm('âš ï¸ WARNING: This will DELETE ALL workflows permanently!\n\nAre you absolutely sure?');
     if (!confirmed) return;
 
     const doubleConfirm = confirm('This cannot be undone. Type OK to confirm.');
@@ -288,29 +349,126 @@ async function clearAllWorkflows() {
     try {
         const res = await ipcRenderer.invoke('clear-all-workflows');
         if (res.success) {
-            alert('✅ All workflows cleared successfully!');
+            alert('âœ… All workflows cleared successfully!');
             await refreshWorkflowList();
         } else {
-            alert('❌ Error: ' + res.error);
+            alert('âŒ Error: ' + res.error);
         }
     } catch (e) {
-        alert('❌ Error: ' + e.message);
+        alert('âŒ Error: ' + e.message);
     }
 }
 
 function switchTab(tabId) {
     document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-    event.target.classList.add('active');
+    event.target.classList.add('active'); // Assuming 'event' is available from an inline onclick handler
     document.querySelectorAll('.tab-pane').forEach(pane => pane.classList.remove('active'));
     document.getElementById(tabId).classList.add('active');
 }
 
-// --- Modals ---
+// ==================== ModalManager (RBAC v2 Input Bug Fix) ====================
+class ModalManager {
+    static focusStack = [];
+
+    static open(modalId) {
+        const modal = document.getElementById(modalId);
+        if (!modal) return;
+
+        // Save current focus
+        const previouslyFocused = document.activeElement;
+        this.focusStack.push({ modal, previouslyFocused });
+
+        modal.style.display = 'block';
+
+        // Set focus to first input
+        const firstInput = modal.querySelector('input:not([disabled]), textarea:not([disabled]), button:not([disabled])');
+        if (firstInput) {
+            setTimeout(() => firstInput.focus(), 50);
+        }
+
+        // Attach focus trap
+        modal._focusTrapHandler = this._trapFocus.bind(this);
+        modal.addEventListener('keydown', modal._focusTrapHandler);
+    }
+
+    static close(modalId) {
+        const modal = document.getElementById(modalId);
+        if (!modal) return;
+
+        const state = this.focusStack[this.focusStack.length - 1];
+
+        // Graceful error recovery: check stack mismatch
+        if (!state || state.modal !== modal) {
+            console.error('[Modal] Stack mismatch! Forcing close.');
+            // Force cleanup even on error (prevent stuck overlay)
+            modal.style.display = 'none';
+            if (modal._focusTrapHandler) {
+                modal.removeEventListener('keydown', modal._focusTrapHandler);
+                delete modal._focusTrapHandler;
+            }
+            return; // Exit, don't try to restore focus
+        }
+
+        this.focusStack.pop();
+
+        // Remove event listener using stored handler
+        if (modal._focusTrapHandler) {
+            modal.removeEventListener('keydown', modal._focusTrapHandler);
+            delete modal._focusTrapHandler;
+        }
+
+        modal.style.display = 'none';
+
+        // Restore previous focus
+        if (state.previouslyFocused && typeof state.previouslyFocused.focus === 'function') {
+            setTimeout(() => {
+                try {
+                    state.previouslyFocused.focus();
+                } catch (e) {
+                    console.warn('[Modal] Could not restore focus:', e);
+                }
+            }, 50);
+        }
+    }
+
+    static _trapFocus(e) {
+        // Handle Escape key to close top-most modal
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            const modal = e.currentTarget;
+            ModalManager.close(modal.id);
+            return;
+        }
+
+        if (e.key !== 'Tab') return;
+
+        const modal = e.currentTarget;
+        const focusable = Array.from(modal.querySelectorAll(
+            'input:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        ));
+
+        if (focusable.length === 0) return;
+
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+
+        if (e.shiftKey && document.activeElement === first) {
+            last.focus();
+            e.preventDefault();
+        } else if (!e.shiftKey && document.activeElement === last) {
+            first.focus();
+            e.preventDefault();
+        }
+    }
+}
+
+// Legacy modal functions (for backward compatibility)
 function closeModal(id) {
-    document.getElementById(id).classList.remove('active');
+    ModalManager.close(id);
 }
 
 function openModal(accountToEdit = null) {
+    ModalManager.open('profileModal'); // Changed from 'addModal' to 'profileModal' based on context
     const modal = document.getElementById('profileModal');
     const title = modal.querySelector('h3');
     const btn = modal.querySelector('.modal-footer .btn:last-child');
@@ -1161,10 +1319,78 @@ function renderPlatformTable() {
         tbody.appendChild(tr);
     });
 }
+function renderUserTable() {
+    const tbody = document.getElementById('userTableBody');
+    tbody.innerHTML = '';
+    users.forEach(u => {
+        const tr = document.createElement('tr');
+        let roleBadge = '<span class="status-badge" style="background:#444">Staff</span>';
+        if (u.role === 'admin') roleBadge = '<span class="status-badge" style="background:var(--accent)">Admin</span>';
+        if (u.role === 'super_admin') roleBadge = '<span class="status-badge" style="background:linear-gradient(45deg, #FFD700, #DAA520); color:black">Super Admin</span>';
 
-// User modal functions moved to user_management.js to avoid conflicts
+        tr.innerHTML = `
+            <td>${u.username}</td>
+            <td>${roleBadge}</td>
+            <td style="text-align:right">
+                <button class="btn btn-secondary" style="padding:5px 10px; font-size:12px;" onclick="openAssignmentModal('${u.id}', '${u.username}')">
+                    <i class="fa-solid fa-link"></i> Assign
+                </button>
+                <button class="btn btn-secondary" onclick="openUserModal({id:'${u.id}', username:'${u.username}', password:'${u.password}', role:'${u.role}'})"><i class="fa-solid fa-pen"></i></button>
+                <button class="btn btn-danger" onclick="deleteUser('${u.id}')"><i class="fa-solid fa-trash"></i></button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
 
+// --- Assignments ---
+var currentAssigningUserId = null;
 
+async function openAssignmentModal(userId, username) {
+    currentAssigningUserId = userId;
+    document.getElementById('assignModalTitle').innerText = `Assign Accounts to ${username}`;
+
+    // Load all accounts (admin view) and current assignments
+    const allAccounts = await ipcRenderer.invoke('get-accounts', { role: 'admin' });
+    const assignedIds = await ipcRenderer.invoke('get-assignments', userId);
+
+    const container = document.getElementById('assignmentList');
+    container.innerHTML = '';
+
+    allAccounts.forEach(acc => {
+        const div = document.createElement('div');
+        div.className = 'form-group';
+        div.style.marginBottom = '10px';
+        const isChecked = assignedIds.includes(acc.id) ? 'checked' : '';
+        div.innerHTML = `
+            <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+                <input type="checkbox" name="assignAcc" value="${acc.id}" ${isChecked}>
+                <span>${acc.name} (${acc.loginUrl})</span>
+            </label>
+        `;
+        container.appendChild(div);
+    });
+
+    document.getElementById('assignmentModal').classList.add('active');
+}
+
+async function saveAssignments() {
+    const checkboxes = document.querySelectorAll('input[name="assignAcc"]:checked');
+    const accountIds = Array.from(checkboxes).map(cb => cb.value);
+
+    const res = await ipcRenderer.invoke('update-assignments', {
+        userId: currentAssigningUserId,
+        accountIds
+    });
+
+    if (res.success) {
+        closeModal('assignmentModal');
+    } else {
+        alert('Failed to update: ' + res.error);
+    }
+}
+
+// --- Bulk Assignments ---
 var selectedAccountIds = new Set();
 var bulkMode = 'assign'; // 'assign' or 'revoke'
 
@@ -1645,7 +1871,7 @@ function addNode(type) {
                 return;
         }
 
-        console.log('✓ Node added successfully:', type);
+        console.log('âœ“ Node added successfully:', type);
         toggleNodeMenu();
         // Mark workflow as changed
         markWorkflowChanged();
@@ -1712,7 +1938,7 @@ function showNodeProperties(nodeId) {
                 const pickBtn = document.createElement('button');
                 pickBtn.className = 'btn';
                 pickBtn.style.cssText = 'padding: 8px 12px; background: var(--accent); color: white; white-space: nowrap;';
-                pickBtn.innerHTML = '🎯 Pick';
+                pickBtn.innerHTML = 'ðŸŽ¯ Pick';
                 pickBtn.onclick = async () => {
                     try {
                         // Get default URL
@@ -1736,27 +1962,27 @@ function showNodeProperties(nodeId) {
                         const url = defaultUrl;
 
                         pickBtn.disabled = true;
-                        pickBtn.innerHTML = '⏳...';
+                        pickBtn.innerHTML = 'â³...';
 
                         try {
                             const res = await ipcRenderer.invoke('open-element-picker', { url, nodeId });
                             if (res.success) {
                                 input.value = res.selector;
                                 updateNodeData(nodeId, key, res.selector);
-                                alert(`✅ Captured: ${res.selector}`);
+                                alert(`âœ… Captured: ${res.selector}`);
                             } else {
-                                alert(`❌ Error: ${res.error}`);
+                                alert(`âŒ Error: ${res.error}`);
                             }
                         } catch (e) {
-                            alert(`❌ ${e.message}`);
+                            alert(`âŒ ${e.message}`);
                         }
 
                         pickBtn.disabled = false;
-                        pickBtn.innerHTML = '🎯 Pick';
+                        pickBtn.innerHTML = 'ðŸŽ¯ Pick';
                     } catch (e) {
                         pickBtn.disabled = false;
-                        pickBtn.innerHTML = '🎯 Pick';
-                        alert(`❌ ${e.message}`);
+                        pickBtn.innerHTML = 'ðŸŽ¯ Pick';
+                        alert(`âŒ ${e.message}`);
                     }
                 };
                 inputWrapper.appendChild(pickBtn);
@@ -2214,7 +2440,7 @@ async function runAutomation(profileId) {
     // Build selection dialog
     let message = `Select workflow for "${profile.name}":\n\n`;
     matchingWorkflows.forEach((w, i) => {
-        const selected = profile.workflow_id === w.id ? ' ✓' : '';
+        const selected = profile.workflow_id === w.id ? ' âœ“' : '';
         message += `${i + 1}. ${w.name}${selected}\n`;
     });
     message += '\n0. Remove assignment';
@@ -2328,7 +2554,7 @@ function toggleTheme() {
 
 // --- Database Reset ---
 async function resetDatabaseWithConfirmation() {
-    const confirmation = confirm("⚠️ DANGER ZONE ⚠️\n\nAre you sure you want to delete ALL database data?\n\n- Profiles, Proxies, Platforms will be WIPED.\n- Workflows will be KEPT.\n- Admin user will be RESTORED.\n\nThis action cannot be undone!");
+    const confirmation = confirm("âš ï¸ DANGER ZONE âš ï¸\n\nAre you sure you want to delete ALL database data?\n\n- Profiles, Proxies, Platforms will be WIPED.\n- Workflows will be KEPT.\n- Admin user will be RESTORED.\n\nThis action cannot be undone!");
 
     if (confirmation) {
         const doubleCheck = confirm("Please confirm one last time: DESTROY ALL DATA?");
@@ -2343,15 +2569,15 @@ async function resetDatabaseWithConfirmation() {
                 const result = await ipcRenderer.invoke('database:reset');
 
                 if (result.success) {
-                    alert("✅ Database has been reset successfully!\n\nThe app will now reload.");
+                    alert("âœ… Database has been reset successfully!\n\nThe app will now reload.");
                     window.location.reload();
                 } else {
-                    alert("❌ Reset failed: " + result.error);
+                    alert("âŒ Reset failed: " + result.error);
                     btn.innerHTML = originalText;
                     btn.disabled = false;
                 }
             } catch (error) {
-                alert("❌ Error: " + error.message);
+                alert("âŒ Error: " + error.message);
                 window.location.reload(); // Reload anyway to be safe
             }
         }
@@ -2369,25 +2595,212 @@ window.launch = async function (id) {
     const result = await ipcRenderer.invoke('launch-browser', { id: id, mode: 'manual' });
     if (!result.success) alert('Launch failed: ' + result.error);
 };
+// ==================== USER MANAGEMENT (RBAC v2) ====================
 
-// --- GLOBAL EXPORTS ---
-window.addNode = addNode;
-window.saveWorkflow = saveWorkflow;
-window.refreshWorkflowList = refreshWorkflowList;
-window.loadWorkflow = loadWorkflow;
-window.createNewWorkflow = createNewWorkflow;
-window.closeEditor = closeEditor;
-window.filterProfiles = filterProfiles;
-window.runAutomation = runAutomation;
-window.showEditor = showEditor;
-window.toggleNodeMenu = toggleNodeMenu;
-window.toggleTheme = toggleTheme;
-window.handleLogin = handleLogin;
-window.handleLogout = handleLogout;
-window.deleteWorkflow = deleteWorkflow;
-window.filterWorkflows = filterWorkflows;
-window.zoomIn = zoomIn;
-window.zoomOut = zoomOut;
-window.zoomReset = zoomReset;
-window.centerWorkflow = centerWorkflow;
-window.clearAllWorkflows = clearAllWorkflows;
+// Render User Table (scoped by backend)
+async function renderUserTable() {
+    const tbody = document.getElementById('userTableBody');
+    if (!tbody) return;
+
+    tbody.innerHTML = '';
+
+    if (!users || users.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--text-muted)">No users found</td></tr>';
+        return;
+    }
+
+    users.forEach(user => {
+        const tr = document.createElement('tr');
+
+        // Username
+        const tdName = document.createElement('td');
+        tdName.textContent = user.username;
+        tr.appendChild(tdName);
+
+        // Role
+        const tdRole = document.createElement('td');
+        const roleColors = {
+            super_admin: '#f59e0b',
+            admin: '#3b82f6',
+            staff: '#10b981'
+        };
+        tdRole.innerHTML = `<span style="color:${roleColors[user.role] || '#888'}; font-weight:600">${user.role}</span>`;
+        tr.appendChild(tdRole);
+
+        // Managed By
+        const tdManaged = document.createElement('td');
+        if (user.managed_by_admin_id) {
+            // Find manager in users array
+            const manager = users.find(u => u.id === user.managed_by_admin_id);
+            if (manager) {
+                tdManaged.textContent = manager.username;
+            } else {
+                // Manager not in scope (shouldn't happen with proper backend)
+                tdManaged.innerHTML = '<span style="color:#f59e0b">Unknown Admin</span>';
+            }
+        } else {
+            tdManaged.innerHTML = '<span style="color:var(--text-muted); font-style:italic">Unassigned</span>';
+        }
+        tr.appendChild(tdManaged);
+
+        //Actions
+        const tdActions = document.createElement('td');
+        tdActions.style.textAlign = 'right';
+
+        // Edit button (Admin can edit managed staff, Super Admin can edit all)
+        const btnEdit = document.createElement('button');
+        btnEdit.className = 'btn btn-secondary';
+        btnEdit.style.padding = '6px 12px';
+        btnEdit.style.fontSize = '13px';
+        btnEdit.style.marginRight = '8px';
+        btnEdit.innerHTML = '<i class="fa-solid fa-edit"></i> Edit';
+        btnEdit.onclick = () => openEditUserModal(user);
+        tdActions.appendChild(btnEdit);
+
+        // Delete button (cannot delete self or Super Admin)
+        if (user.id !== currentUser.id && user.role !== 'super_admin') {
+            const btnDel = document.createElement('button');
+            btnDel.className = 'btn btn-danger';
+            btnDel.style.padding = '6px 12px';
+            btnDel.style.fontSize = '13px';
+            btnDel.innerHTML = '<i class="fa-solid fa-trash"></i> Delete';
+            btnDel.onclick = () => deleteUser(user.id);
+            tdActions.appendChild(btnDel);
+        }
+
+        tr.appendChild(tdActions);
+        tbody.appendChild(tr);
+    });
+}
+
+// Open Add User Modal
+function openAddUserModal() {
+    editingUserId = null;
+    document.getElementById('userModalTitle').textContent = 'Add New User';
+    document.getElementById('userUsername').value = '';
+    document.getElementById('userPassword').value = '';
+    document.getElementById('userRole').value = 'staff'; // Default to staff
+
+    // Admin can only create staff
+    const roleSelect = document.getElementById('userRole');
+    if (currentUser.role === 'admin') {
+        roleSelect.innerHTML = '<option value="staff">Staff</option>';
+        roleSelect.disabled = true;
+    } else {
+        // Super Admin can create any role
+        roleSelect.innerHTML = `
+            <option value="staff">Staff</option>
+            <option value="admin">Admin</option>
+            <option value="super_admin">Super Admin</option>
+        `;
+        roleSelect.disabled = false;
+    }
+
+    document.getElementById('modalUser').style.display = 'flex';
+    document.getElementById('userUsername').focus();
+}
+
+// Open Edit User Modal
+function openEditUserModal(user) {
+    editingUserId = user.id;
+    document.getElementById('userModalTitle').textContent = 'Edit User';
+    document.getElementById('userUsername').value = user.username;
+    document.getElementById('userPassword').value = ''; // Leave blank
+    document.getElementById('userPassword').placeholder = 'Leave blank to keep current password';
+
+    // Role selection
+    const roleSelect = document.getElementById('userRole');
+    if (currentUser.role === 'super_admin') {
+        roleSelect.innerHTML = `
+            <option value="staff" ${user.role === 'staff' ? 'selected' : ''}>Staff</option>
+            <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Admin</option>
+            <option value="super_admin" ${user.role === 'super_admin' ? 'selected' : ''}>Super Admin</option>
+        `;
+        roleSelect.disabled = false;
+    } else {
+        // Admin cannot change roles
+        roleSelect.innerHTML = `<option value="${user.role}">${user.role}</option>`;
+        roleSelect.disabled = true;
+    }
+
+    document.getElementById('modalUser').style.display = 'flex';
+    document.getElementById('userUsername').focus();
+}
+
+// Save User (Create or Update)
+async function saveUser() {
+    const username = document.getElementById('userUsername').value.trim();
+    const password = document.getElementById('userPassword').value;
+    const role = document.getElementById('userRole').value;
+
+    if (!username) {
+        alert('Username is required');
+        return;
+    }
+
+    // Create mode: password required
+    if (!editingUserId && !password) {
+        alert('Password is required for new users');
+        return;
+    }
+
+    try {
+        const userData = {
+            username,
+            role
+        };
+
+        if (editingUserId) {
+            // Update mode
+            userData.id = editingUserId;
+            if (password) {
+                userData.password = password; // Only update if provided
+            }
+        } else {
+            // Create mode
+            userData.password = password;
+        }
+
+        const res = await ipcRenderer.invoke('save-user', userData);
+        if (res.success) {
+            document.getElementById('modalUser').style.display = 'none';
+            users = await ipcRenderer.invoke('get-users');
+            renderUserTable();
+        } else {
+            alert('Error: ' + res.error);
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+// Delete User
+async function deleteUser(userId) {
+    if (!confirm('Are you sure you want to delete this user?')) return;
+
+    try {
+        const res = await ipcRenderer.invoke('delete-user', userId);
+        if (res.success) {
+            users = await ipcRenderer.invoke('get-users');
+            renderUserTable();
+        } else {
+            alert('Error: ' + res.error);
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+// Close User Modal
+function closeUserModal() {
+    document.getElementById('modalUser').style.display = 'none';
+    editingUserId = null;
+}
+
+// Export functions to global scope
+window.renderUserTable = renderUserTable;
+window.openAddUserModal = openAddUserModal;
+window.openEditUserModal = openEditUserModal;
+window.saveUser = saveUser;
+window.deleteUser = deleteUser;
+window.closeUserModal = closeUserModal;

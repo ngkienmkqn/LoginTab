@@ -1,7 +1,7 @@
 {
     "name": "login-tab",
-    "version": "1.0.3",
-    "description": "Login Tab - Advanced Account Manager",
+    "version": "1.0.4",
+    "description": "Login Tab - Advanced Account Manager with RBAC v2",
     "main": "main.js",
     "scripts": {
         "start": "electron .",

@@ -1,0 +1,250 @@
+﻿        label.innerHTML = isLight ? '<i class="fa-solid fa-sun"></i> Light Mode' : '<i class="fa-solid fa-moon"></i> Dark Mode';
+    }
+}
+
+// --- Database Reset ---
+async function resetDatabaseWithConfirmation() {
+    const confirmation = confirm("âš ï¸ DANGER ZONE âš ï¸\n\nAre you sure you want to delete ALL database data?\n\n- Profiles, Proxies, Platforms will be WIPED.\n- Workflows will be KEPT.\n- Admin user will be RESTORED.\n\nThis action cannot be undone!");
+
+    if (confirmation) {
+        const doubleCheck = confirm("Please confirm one last time: DESTROY ALL DATA?");
+        if (doubleCheck) {
+            try {
+                // Show loading state
+                const btn = document.querySelector('#view-database button.btn-danger');
+                const originalText = btn.innerHTML;
+                btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Resetting...';
+                btn.disabled = true;
+
+                const result = await ipcRenderer.invoke('database:reset');
+
+                if (result.success) {
+                    alert("âœ… Database has been reset successfully!\n\nThe app will now reload.");
+                    window.location.reload();
+                } else {
+                    alert("âŒ Reset failed: " + result.error);
+                    btn.innerHTML = originalText;
+                    btn.disabled = false;
+                }
+            } catch (error) {
+                alert("âŒ Error: " + error.message);
+                window.location.reload(); // Reload anyway to be safe
+            }
+        }
+    }
+}
+
+// Make globally available
+window.resetDatabaseWithConfirmation = resetDatabaseWithConfirmation;
+
+// --- Launch Function (Manual Override) ---
+window.launch = async function (id) {
+    if (!id) return;
+    console.log('Launching manual session for:', id);
+    // Explicitly send mode: 'manual' to prevent auto-close behavior
+    const result = await ipcRenderer.invoke('launch-browser', { id: id, mode: 'manual' });
+    if (!result.success) alert('Launch failed: ' + result.error);
+};
+// ==================== USER MANAGEMENT (RBAC v2) ====================
+
+// Render User Table (scoped by backend)
+async function renderUserTable() {
+    const tbody = document.getElementById('userTableBody');
+    if (!tbody) return;
+
+    tbody.innerHTML = '';
+
+    if (!users || users.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--text-muted)">No users found</td></tr>';
+        return;
+    }
+
+    users.forEach(user => {
+        const tr = document.createElement('tr');
+
+        // Username
+        const tdName = document.createElement('td');
+        tdName.textContent = user.username;
+        tr.appendChild(tdName);
+
+        // Role
+        const tdRole = document.createElement('td');
+        const roleColors = {
+            super_admin: '#f59e0b',
+            admin: '#3b82f6',
+            staff: '#10b981'
+        };
+        tdRole.innerHTML = `<span style="color:${roleColors[user.role] || '#888'}; font-weight:600">${user.role}</span>`;
+        tr.appendChild(tdRole);
+
+        // Managed By
+        const tdManaged = document.createElement('td');
+        if (user.managed_by_admin_id) {
+            const manager = users.find(u => u.id === user.managed_by_admin_id);
+            tdManaged.textContent = manager ? manager.username : 'Unknown';
+        } else {
+            tdManaged.innerHTML = '<span style="color:var(--text-muted)">â€”</span>';
+        }
+        tr.appendChild(tdManaged);
+
+        //Actions
+        const tdActions = document.createElement('td');
+        tdActions.style.textAlign = 'right';
+
+        // Edit button (Admin can edit managed staff, Super Admin can edit all)
+        const btnEdit = document.createElement('button');
+        btnEdit.className = 'btn btn-secondary';
+        btnEdit.style.padding = '6px 12px';
+        btnEdit.style.fontSize = '13px';
+        btnEdit.style.marginRight = '8px';
+        btnEdit.innerHTML = '<i class="fa-solid fa-edit"></i> Edit';
+        btnEdit.onclick = () => openEditUserModal(user);
+        tdActions.appendChild(btnEdit);
+
+        // Delete button (cannot delete self or Super Admin)
+        if (user.id !== currentUser.id && user.role !== 'super_admin') {
+            const btnDel = document.createElement('button');
+            btnDel.className = 'btn btn-danger';
+            btnDel.style.padding = '6px 12px';
+            btnDel.style.fontSize = '13px';
+            btnDel.innerHTML = '<i class="fa-solid fa-trash"></i> Delete';
+            btnDel.onclick = () => deleteUser(user.id);
+            tdActions.appendChild(btnDel);
+        }
+
+        tr.appendChild(tdActions);
+        tbody.appendChild(tr);
+    });
+}
+
+// Open Add User Modal
+function openAddUserModal() {
+    editingUserId = null;
+    document.getElementById('userModalTitle').textContent = 'Add New User';
+    document.getElementById('userUsername').value = '';
+    document.getElementById('userPassword').value = '';
+    document.getElementById('userRole').value = 'staff'; // Default to staff
+
+    // Admin can only create staff
+    const roleSelect = document.getElementById('userRole');
+    if (currentUser.role === 'admin') {
+        roleSelect.innerHTML = '<option value="staff">Staff</option>';
+        roleSelect.disabled = true;
+    } else {
+        // Super Admin can create any role
+        roleSelect.innerHTML = `
+            <option value="staff">Staff</option>
+            <option value="admin">Admin</option>
+            <option value="super_admin">Super Admin</option>
+        `;
+        roleSelect.disabled = false;
+    }
+
+    document.getElementById('modalUser').style.display = 'flex';
+    document.getElementById('userUsername').focus();
+}
+
+// Open Edit User Modal
+function openEditUserModal(user) {
+    editingUserId = user.id;
+    document.getElementById('userModalTitle').textContent = 'Edit User';
+    document.getElementById('userUsername').value = user.username;
+    document.getElementById('userPassword').value = ''; // Leave blank
+    document.getElementById('userPassword').placeholder = 'Leave blank to keep current password';
+
+    // Role selection
+    const roleSelect = document.getElementById('userRole');
+    if (currentUser.role === 'super_admin') {
+        roleSelect.innerHTML = `
+            <option value="staff" ${user.role === 'staff' ? 'selected' : ''}>Staff</option>
+            <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Admin</option>
+            <option value="super_admin" ${user.role === 'super_admin' ? 'selected' : ''}>Super Admin</option>
+        `;
+        roleSelect.disabled = false;
+    } else {
+        // Admin cannot change roles
+        roleSelect.innerHTML = `<option value="${user.role}">${user.role}</option>`;
+        roleSelect.disabled = true;
+    }
+
+    document.getElementById('modalUser').style.display = 'flex';
+    document.getElementById('userUsername').focus();
+}
+
+// Save User (Create or Update)
+async function saveUser() {
+    const username = document.getElementById('userUsername').value.trim();
+    const password = document.getElementById('userPassword').value;
+    const role = document.getElementById('userRole').value;
+
+    if (!username) {
+        alert('Username is required');
+        return;
+    }
+
+    // Create mode: password required
+    if (!editingUserId && !password) {
+        alert('Password is required for new users');
+        return;
+    }
+
+    try {
+        const userData = {
+            username,
+            role
+        };
+
+        if (editingUserId) {
+            // Update mode
+            userData.id = editingUserId;
+            if (password) {
+                userData.password = password; // Only update if provided
+            }
+        } else {
+            // Create mode
+            userData.password = password;
+        }
+
+        const res = await ipcRenderer.invoke('save-user', userData);
+        if (res.success) {
+            document.getElementById('modalUser').style.display = 'none';
+            users = await ipcRenderer.invoke('get-users');
+            renderUserTable();
+        } else {
+            alert('Error: ' + res.error);
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+// Delete User
+async function deleteUser(userId) {
+    if (!confirm('Are you sure you want to delete this user?')) return;
+
+    try {
+        const res = await ipcRenderer.invoke('delete-user', userId);
+        if (res.success) {
+            users = await ipcRenderer.invoke('get-users');
+            renderUserTable();
+        } else {
+            alert('Error: ' + res.error);
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+// Close User Modal
+function closeUserModal() {
+    document.getElementById('modalUser').style.display = 'none';
+    editingUserId = null;
+}
+
+// Export functions to global scope
+window.renderUserTable = renderUserTable;
+window.openAddUserModal = openAddUserModal;
+window.openEditUserModal = openEditUserModal;
+window.saveUser = saveUser;
+window.deleteUser = deleteUser;
+window.closeUserModal = closeUserModal;
