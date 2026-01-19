@@ -285,7 +285,8 @@ class BrowserManager {
             userDataDir,
             args: args, // Use direct args
             ignoreHTTPSErrors: true,
-            ignoreDefaultArgs: true // Keep this true (Clean Slate)
+            ignoreDefaultArgs: true, // Keep this true (Clean Slate)
+            pipe: true // CRITICAL: Required for packaged Electron apps to communicate with Chrome
         });
 
         // ---------------------------------------------------------

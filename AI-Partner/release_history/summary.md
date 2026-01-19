@@ -1,5 +1,13 @@
 # Release History
 
+## [2.1.2] - 2026-01-19
+**"The Hotfix Build"**
+
+### Critical Fixes
+- **Build Launch Error:** Added `pipe: true` to Puppeteer launch configuration. This resolves the "Failed to launch browser process" error seen in packaged/built versions (Electron IPC issue).
+
+
+
 ## [2.1.1] - 2026-01-19
 **"The Cross-Platform Stealth Update"**
 
