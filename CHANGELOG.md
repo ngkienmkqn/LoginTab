@@ -1,5 +1,17 @@
 # Release History
 
+## [2.2.3] - 2026-01-19
+**"Version Display Update"**
+
+### Features
+- **Window Title Version:** Application window now displays version number in title bar (`Login Tab v2.2.3`) for easy version identification.
+
+### Technical Details
+- Window title dynamically reads version from `package.json` using `require('./package.json').version`
+- Eliminates version confusion when running multiple instances or testing different builds
+
+
+
 ## [2.2.2] - 2026-01-19
 **"Cookie Sync Actually Works Now"**
 

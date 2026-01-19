@@ -171,7 +171,7 @@ async function createWindow() {
             contextIsolation: false,
             devTools: true
         },
-        title: 'Login Tab',
+        title: `Login Tab v${require('./package.json').version}`,
         icon: appIcon,
         autoHideMenuBar: true,
         backgroundColor: '#1e1e1e',

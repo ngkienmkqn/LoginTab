@@ -1,6 +1,6 @@
 {
     "name": "login-tab",
-    "version": "2.2.2",
+    "version": "2.2.3",
     "description": "Login Tab - Advanced Account Manager with RBAC v2",
     "main": "main.js",
     "scripts": {
