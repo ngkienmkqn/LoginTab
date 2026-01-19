@@ -791,6 +791,18 @@ ipcMain.handle('delete-platform', async (event, id) => {
     }
 });
 
+// Generate Fingerprint Preview
+ipcMain.handle('preview-fingerprint', async (event, currentId, os) => {
+    try {
+        const id = currentId || 'PREVIEW_' + Date.now(); // Volatile seed for "New" accounts
+        const fp = FingerprintGenerator.generateFingerprint(id, os || 'win');
+        return { success: true, fingerprint: fp };
+    } catch (e) {
+        console.error('Preview failed:', e);
+        return { success: false, error: e.message };
+    }
+});
+
 // Launch Profile
 ipcMain.handle('launch-browser', async (event, arg) => {
     try {
@@ -868,7 +880,16 @@ ipcMain.handle('launch-browser', async (event, arg) => {
                 if (page) {
                     const AutomationManager = require('./src/managers/AutomationManager');
                     const automationManager = new AutomationManager(BrowserManager);
-                    await automationManager.runWorkflow(workflowData, page, account);
+                    await automationManager.runWorkflow(
+                        workflowData,
+                        page,
+                        {}, // userProfile (placeholder)
+                        { // profileContext (Variables)
+                            username: account.auth?.username || '',
+                            password: account.auth?.password || '',
+                            twofa: account.auth?.twoFactorSecret || account.auth?.secret2FA || ''
+                        }
+                    );
                     console.log('[IPC] Workflow execution completed');
                 }
             }
@@ -1684,6 +1705,10 @@ ipcMain.handle('database:reset', async () => {
 // Automation Handlers
 const automationManager = new AutomationManager(BrowserManager);
 
+ipcMain.handle('get-available-nodes', async () => {
+    return automationManager.getRegistryJson();
+});
+
 ipcMain.handle('save-workflow', async (event, workflow) => {
     try {
         const pool = await getPool();
@@ -1812,61 +1837,26 @@ ipcMain.handle('open-element-picker', async (event, { url, nodeId }) => {
 
         const page = await browser.newPage();
 
-        // Read picker script once
-        const pickerScript = await fs.readFile(path.join(__dirname, 'src/scripts/element-picker.js'), 'utf8');
-
         // Navigate to initial URL
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-        // Inject picker on initial page
-        await page.evaluate(pickerScript);
-        console.log('[Element Picker] Picker initialized on:', url);
+        console.log('[Element Picker] Waiting for selection via BrowserManager...');
 
-        // Re-inject picker script on EVERY page navigation
-        page.on('framenavigated', async (frame) => {
-            if (frame === page.mainFrame()) {
-                try {
-                    await page.evaluate(pickerScript);
-                    console.log('[Element Picker] Re-injected on:', page.url());
-                } catch (e) {
-                    console.warn('[Element Picker] Re-injection failed:', e.message);
-                }
-            }
-        });
-
-        console.log('[Element Picker] Waiting for selection (navigate freely)...');
-
-        // Poll for selector (survives navigation)
-        const selector = await new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => {
-                clearInterval(poll);
-                reject(new Error('Timeout'));
-            }, 120000);
-
-            const poll = setInterval(async () => {
-                try {
-                    const picked = await page.evaluate(() => window.__pickedSelector);
-                    if (picked) {
-                        clearInterval(poll);
-                        clearTimeout(timeout);
-                        resolve(picked);
-                    }
-                } catch (e) { }
-            }, 500);
-        });
-
-        console.log('[Element Picker] Selector captured:', selector);
-
-        // Wait a bit before closing to ensure selector is fully captured
-        await new Promise(resolve => setTimeout(resolve, 500));
-
-        await browser.close();
-        return { success: true, selector };
-    } catch (error) {
-        console.error('[Element Picker] Error:', error);
-        return { success: false, error: error.message };
+        // Use the CENTRALIZED Picker Logic (with Confirmation UI)
+        try {
+            const selector = await BrowserManager.startElementPicker(page);
+            await browser.close();
+            return { success: true, selector };
+        } catch (err) {
+            await browser.close();
+            return { success: false, error: err.message };
+        }
+    } catch (e) {
+        return { success: false, error: e.message };
     }
 });
+
+
 
 ipcMain.handle('run-automation-on-profile', async (event, { profileId, workflowId }) => {
     try {
@@ -1884,8 +1874,31 @@ ipcMain.handle('run-automation-on-profile', async (event, { profileId, workflowI
 
         const workflowData = JSON.parse(rows[0].graph_data);
 
-        // 3. Execute
-        await automationManager.runWorkflow({ drawflow: { Home: { data: workflowData } } }, page);
+        const [accRows] = await pool.query('SELECT auth_config FROM accounts WHERE id = ?', [profileId]);
+        const accountData = accRows[0] || {};
+
+        let auth = accountData.auth_config || {};
+        if (typeof auth === 'string') {
+            try { auth = JSON.parse(auth); } catch (e) { console.warn('Failed to parse auth_config:', e); auth = {}; }
+        }
+
+        console.log('[Main] Loaded Profile Auth:', {
+            hasUser: !!auth.username,
+            hasPass: !!auth.password,
+            usernameVal: auth.username // Log actual value for debugging (remove in prod)
+        });
+
+        // 3. Execute with Profile Context
+        await automationManager.runWorkflow(
+            { drawflow: { Home: { data: workflowData } } },
+            page,
+            {}, // userProfile (default)
+            { // profileContext
+                username: auth.username || '',
+                password: auth.password || '',
+                twofa: auth.twofaSecret || auth.twofa_secret || ''
+            }
+        );
         return { success: true };
     } catch (e) {
         console.error('Run Automation Error:', e);

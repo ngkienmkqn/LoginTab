@@ -19,40 +19,40 @@ class FingerprintGenerator {
         // Get OS-specific configuration
         const osConfig = this.getOSConfig(os);
 
-        // HIGH TRUST: Use only very recent Stable Chrome versions
-        const chromeVersion = this.pickRandom(random, ['132.0.0.0', '131.0.0.0', '130.0.0.0']);
+        // HIGH TRUST: Use only very recent Stable Chrome versions (Updated to 139/140/141)
+        const chromeVersion = this.pickRandom(random, ['141.0.0.0', '140.0.0.0', '139.0.0.0']);
 
         const fingerprint = {
-            // Screen: STRICTLY LOCKED via helper (2560x1440)
+            // Screen: Randomize common resolutions
             resolution: this.generateResolution(random),
             colorDepth: 24,
-            pixelRatio: this.pickRandom(random, [1, 1, 1.25]), // Mostly standard DPI
+            pixelRatio: this.pickRandom(random, [1, 1, 1.25, 1.5]),
 
             // Navigator Properties (OS-Specific)
             userAgent: osConfig.userAgent.split('${chromeVersion}').join(chromeVersion),
             platform: osConfig.platform,
             platformName: osConfig.platformName, // For userAgentData
             oscpu: osConfig.oscpu, // May be undefined for Mac
-            language: 'en-US',
-            languages: ['en-US', 'en'],
-            doNotTrack: null,
+            language: 'vi-VN',
+            languages: ['vi-VN', 'vi', 'en-US', 'en'],
+            doNotTrack: '1',
 
-            // Hardware: High-performance profile (Gamers/Devs)
-            hardwareConcurrency: this.pickRandom(random, [8, 12, 16, 24]), // Avoid 4 cores (too weak/VM-like)
-            deviceMemory: this.pickRandom(random, [8, 16, 32]), // High RAM
+            // Hardware: Diverse profile (Low-end to High-end)
+            hardwareConcurrency: this.pickRandom(random, [2, 4, 8, 10, 12, 16, 24]), // Added 2, 4 for common VN office PCs
+            deviceMemory: this.pickRandom(random, [4, 8, 10, 12, 16, 24, 32]), // Added 4, 8 (Common)
 
             // Explicitly store Chrome Version for checks
             chromeVersion: chromeVersion,
 
-            // WebGL Fingerprint (OS-Synchronized & High Trust)
+            // WebGL Fingerprint (Consistent spoofing for best detection)
             webglVendor: osConfig.webglVendor,
             webglRenderer: osConfig.webglRenderer,
             webglVersion: 'WebGL 1.0 (OpenGL ES 2.0 Chromium)',
             shadingLanguageVersion: 'WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)',
 
-            // Canvas & Audio Noise
-            canvasNoise: this.generateCanvasNoise(seed),
-            audioNoise: random() * 0.00001, // Extremely subtle noise
+            // Canvas & Audio Noise (Set to null for "Real" mode)
+            canvasNoise: null, // Default to Real
+            audioNoise: null,  // Default to Real
 
             // Fonts (OS-Specific)
             fonts: osConfig.fonts,
@@ -72,7 +72,7 @@ class FingerprintGenerator {
                 level: 0.90 + random() * 0.10
             },
 
-            // Connection (realistic 4G)
+            // Connection (realistic 4G/Fiber)
             connection: {
                 effectiveType: '4g',
                 downlink: 10,
@@ -95,9 +95,35 @@ class FingerprintGenerator {
                 microphone: 'prompt'
             },
 
+            // --- EXTENDED FINGERPRINT & UI MAPPING ---
+            browserKernel: chromeVersion, // User requested "Browser Kernel"
+
+            // "Real" Mode Flags (Explicit for UI/DB)
+            webRTC: 'Real', // or 'Disable' / 'Public'
+            canvasProtection: 'Real', // Canvas Noise is null
+            webglImageProtection: 'Real',
+            webglMetadataProtection: 'Real',
+            audioContextProtection: 'Real',
+            clientRects: 'Real',
+            speechVoices: 'Real',
+            mediaDevice: 'Real',
+
+            // Natural Mode 2.0 Identity
+            deviceName: this.generateDeviceName(random),
+            macAddress: this.generateMacAddress(random),
+            geolocation: this.generateGeolocation(random),
+
+            // Hardcoded "Accept" values
+            flash: 'Accept',
+            portScanProtection: 'Accept',
+            hardwareAcceleration: 'Accept',
+
+            // Timezone Adjustment to exact string
+            timezone: 'Asia/Bangkok',
+
             // Generation metadata
             generated: new Date().toISOString(),
-            version: '1.0',
+            version: '1.6', // Bump version
             chromeVersion: chromeVersion
         };
 
@@ -210,8 +236,14 @@ class FingerprintGenerator {
      * STRICTLY 2560x1440 (Proven Success)
      */
     static generateResolution(random) {
-        // LOCK to 2560x1440 as per user confirmation
-        return '2560x1440';
+        const resolutions = [
+            '1920x1080', '1920x1080', '1920x1080', // weighted
+            '2560x1440', '2560x1440',
+            '1366x768',
+            '3840x2160',
+            '1536x864'
+        ];
+        return this.pickRandom(random, resolutions);
     }
 
     /**
@@ -304,6 +336,55 @@ class FingerprintGenerator {
     /**
      * Update existing fingerprint (for minor variations)
      */
+    /**
+     * Generate realistic Device Name (DESKTOP-XXXXX)
+     */
+    static generateDeviceName(random) {
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        let id = '';
+        for (let i = 0; i < 5; i++) {
+            id += chars.charAt(Math.floor(random() * chars.length));
+        }
+        return `DESKTOP-${id}`;
+    }
+
+    /**
+     * Generate realistic MAC Address
+     * Prefix: 54:52:00 (Common) or Random
+     */
+    static generateMacAddress(random) {
+        const hex = () => Math.floor(random() * 256).toString(16).padStart(2, '0').toUpperCase();
+        return `54:52:00:${hex()}:${hex()}:${hex()}`;
+    }
+
+    /**
+     * Generate Geolocation (Vietnamese bounds)
+     */
+    static generateGeolocation(random) {
+        // Simple bounding box for main VN regions or random near Hanoi/HCMC
+        // Hanoi: Lat 20.5 - 21.5, Long 105.5 - 106.5
+        // HCMC: Lat 10.5 - 11.5, Long 106.3 - 107.0
+
+        const north = random() > 0.5;
+        let lat, long;
+
+        if (north) {
+            // Hanoi Region
+            lat = 20.9 + random() * 0.8; // 20.9 - 21.7
+            long = 105.7 + random() * 0.6; // 105.7 - 106.3
+        } else {
+            // HCMC Region
+            lat = 10.7 + random() * 0.6;
+            long = 106.6 + random() * 0.5;
+        }
+
+        return {
+            latitude: lat,
+            longitude: long,
+            accuracy: Math.floor(random() * 20) + 70 // 70-90m
+        };
+    }
+
     static updateFingerprint(existingFingerprint) {
         return {
             ...existingFingerprint,

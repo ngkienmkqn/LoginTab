@@ -1,0 +1,42 @@
+[
+  {
+    "config": "Test 1 - Pure Puppeteer (No Evasions)",
+    "loaded": true,
+    "hasSpinner": false,
+    "hasFingerprint": true,
+    "screenshot": "C:\\Users\\admin\\OneDrive\\Desktop\\Auto Login APP\\iphey_test_results\\test_1_1768787582891.png",
+    "status": "✅ SUCCESS"
+  },
+  {
+    "config": "Test 2 - Only AutomationControlled Flag",
+    "loaded": true,
+    "hasSpinner": false,
+    "hasFingerprint": true,
+    "screenshot": "C:\\Users\\admin\\OneDrive\\Desktop\\Auto Login APP\\iphey_test_results\\test_2_1768787607490.png",
+    "status": "✅ SUCCESS"
+  },
+  {
+    "config": "Test 3 - Stealth Plugin Only",
+    "loaded": true,
+    "hasSpinner": false,
+    "hasFingerprint": true,
+    "screenshot": "C:\\Users\\admin\\OneDrive\\Desktop\\Auto Login APP\\iphey_test_results\\test_3_1768787632315.png",
+    "status": "✅ SUCCESS"
+  },
+  {
+    "config": "Test 4 - Stealth + AutomationControlled",
+    "loaded": true,
+    "hasSpinner": false,
+    "hasFingerprint": true,
+    "screenshot": "C:\\Users\\admin\\OneDrive\\Desktop\\Auto Login APP\\iphey_test_results\\test_4_1768787657461.png",
+    "status": "✅ SUCCESS"
+  },
+  {
+    "config": "Test 5 - Custom Script Only (No Stealth)",
+    "loaded": true,
+    "hasSpinner": false,
+    "hasFingerprint": true,
+    "screenshot": "C:\\Users\\admin\\OneDrive\\Desktop\\Auto Login APP\\iphey_test_results\\test_5_1768787682773.png",
+    "status": "✅ SUCCESS"
+  }
+]

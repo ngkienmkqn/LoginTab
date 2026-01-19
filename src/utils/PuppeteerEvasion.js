@@ -212,9 +212,10 @@ Object.defineProperty(navigator, 'mimeTypes', {
      * 4. Fix WebGL - DYNAMIC from Fingerprint
      */
     static fixWebGL(fp) {
-        // Use fingerprint WebGL or fallback to realistic default
-        const vendor = fp.webglVendor || 'Google Inc. (NVIDIA)';
-        const renderer = fp.webglRenderer || 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)';
+        if (!fp.webglVendor || !fp.webglRenderer) return ''; // Real Mode
+
+        const vendor = fp.webglVendor;
+        const renderer = fp.webglRenderer;
 
         return `
 // WebGL Fix (Dynamic)

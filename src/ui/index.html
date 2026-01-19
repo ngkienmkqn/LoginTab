@@ -950,6 +950,8 @@
                     z-index: 101;
                     animation: slideUp 0.2s ease-out;
                     border: 1px solid #eee;
+                    max-height: 500px;
+                    overflow-y: auto;
                 ">
                     <div style="padding: 10px; border-bottom: 1px solid #eee; font-weight: bold; color: #555;">Add Node
                     </div>
@@ -1348,14 +1350,7 @@
                             <label>Login URL (Auto-open)</label>
                             <input type="text" class="form-control" id="inpUrl" placeholder="https://facebook.com">
                         </div>
-                        <div class="form-group">
-                            <label>Platform (OS)</label>
-                            <select class="form-control" id="inpOS">
-                                <option value="win">Windows</option>
-                                <option value="mac">macOS</option>
-                                <option value="linux">Linux</option>
-                            </select>
-                        </div>
+
                         <div class="form-group">
                             <label>Notes (Optional)</label>
                             <textarea class="form-control" id="inpNotes" rows="3"
@@ -1432,61 +1427,143 @@
 
                     <!-- Tab: Fingerprint -->
                     <div id="tab-fingerprint" class="tab-pane">
-                        <div class="form-group">
-                            <label>User Agent</label>
-                            <div style="display:flex; gap:10px;">
-                                <input type="text" class="form-control" id="inpUA" value="Mozilla/5.0...">
-                                <button class="btn" style="padding: 5px 10px; font-size:12px;"
-                                    onclick="randomUA()">Random</button>
+                        <!-- Header -->
+                        <div style="display:flex; justify-content:space-between; align-items:end; margin-bottom:15px;">
+                            <div style="flex:1; margin-right:10px;">
+                                <label>Platform (OS)</label>
+                                <select class="form-control" id="inpOS" onchange="updateFingerprintPreview()">
+                                    <option value="win">Windows</option>
+                                    <option value="mac">macOS</option>
+                                    <option value="linux">Linux</option>
+                                </select>
                             </div>
-                        </div>
-                        <div class="form-group">
-                            <label>Screen Resolution</label>
-                            <select class="form-control" id="inpRes">
-                                <option value="1920x1080">1920 x 1080</option>
-                                <option value="1366x768">1366 x 768</option>
-                                <option value="1440x900">1440 x 900</option>
-                                <option value="2560x1440">2560 x 1440</option>
-                            </select>
+                            <button class="btn" style="height:36px; background:var(--accent);"
+                                onclick="updateFingerprintPreview()">
+                                <i class="fa-solid fa-dice"></i> Randomize
+                            </button>
                         </div>
 
-                        <!-- ADVANCED FINGERPRINT DETAILS -->
+                        <!-- Dense Fingerprint Grid -->
                         <div
-                            style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 5px; margin-bottom: 10px;">
-                            <h5 style="margin: 0 0 10px 0; color: var(--accent);">Advanced Fingerprint Details</h5>
+                            style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; max-height:400px; overflow-y:auto; padding-right:5px;">
 
-                            <div class="row">
-                                <div class="col form-group">
-                                    <label>Hardware Concurrency</label>
-                                    <input type="text" class="form-control" id="fpHardware" readonly
-                                        style="background:#222; color:#aaa;">
-                                </div>
-                                <div class="col form-group">
-                                    <label>Device Memory (GB)</label>
-                                    <input type="text" class="form-control" id="fpMemory" readonly
-                                        style="background:#222; color:#aaa;">
-                                </div>
+                            <!-- Col 1 -->
+                            <div class="form-group">
+                                <label>Browser Kernel</label>
+                                <input type="text" class="form-control" id="fpKernel" readonly
+                                    style="background:#222; color:#aaa; font-size:11px;">
+                            </div>
+                            <div class="form-group">
+                                <label>User Agent</label>
+                                <input type="text" class="form-control" id="inpUA" readonly
+                                    style="background:#222; color:#aaa; font-size:11px;">
                             </div>
 
                             <div class="form-group">
-                                <label>WebGL Renderer</label>
-                                <input type="text" class="form-control" id="fpRenderer" readonly
-                                    style="background:#222; color:#aaa; font-size: 11px;">
+                                <label>Timezone</label>
+                                <input type="text" class="form-control" id="fpTimezone" readonly
+                                    style="background:#222; color:#aaa; font-size:11px;">
+                            </div>
+                            <div class="form-group">
+                                <label>WebRTC</label>
+                                <input type="text" class="form-control" id="fpWebRTC" readonly
+                                    style="background:#222; color:#aaa; font-size:11px;">
                             </div>
 
-                            <div class="row">
-                                <div class="col form-group">
-                                    <label>Canvas Noise</label>
-                                    <input type="text" class="form-control" id="fpCanvas" readonly
-                                        style="background:#222; color:#aaa;">
-                                </div>
-                                <div class="col form-group">
-                                    <label>Audio Noise</label>
-                                    <input type="text" class="form-control" id="fpAudio" readonly
-                                        style="background:#222; color:#aaa;">
-                                </div>
+                            <div class="form-group" style="grid-column: span 2">
+                                <label>Geolocation</label>
+                                <input type="text" class="form-control" id="fpGeo" readonly
+                                    style="background:#222; color:#aaa; font-size:11px;">
+                            </div>
+
+                            <div class="form-group">
+                                <label>Language</label>
+                                <input type="text" class="form-control" id="fpLang" readonly
+                                    style="background:#222; color:#aaa; font-size:11px;">
+                            </div>
+                            <div class="form-group">
+                                <label>Screen Resolution</label>
+                                <input type="text" class="form-control" id="inpRes" readonly
+                                    style="background:#222; color:#aaa; font-size:11px;">
+                            </div>
+
+                            <div class="form-group">
+                                <label>Fonts</label>
+                                <input type="text" class="form-control" id="fpFonts" readonly
+                                    style="background:#222; color:#aaa; font-size:11px;">
+                            </div>
+                            <div class="form-group">
+                                <label>Canvas</label>
+                                <input type="text" class="form-control" id="fpCanvas" readonly
+                                    style="background:#222; color:#aaa; font-size:11px;">
+                            </div>
+
+                            <div class="form-group">
+                                <label>WebGL Image</label>
+                                <input type="text" class="form-control" id="fpWebGLImg" readonly
+                                    style="background:#222; color:#aaa; font-size:11px;">
+                            </div>
+                            <div class="form-group">
+                                <label>WebGL Metadata</label>
+                                <input type="text" class="form-control" id="fpRenderer" readonly
+                                    style="background:#222; color:#aaa; font-size:11px;">
+                            </div>
+
+                            <div class="form-group">
+                                <label>Audio Context</label>
+                                <input type="text" class="form-control" id="fpAudio" readonly
+                                    style="background:#222; color:#aaa; font-size:11px;">
+                            </div>
+                            <div class="form-group">
+                                <label>Media Device</label>
+                                <input type="text" class="form-control" id="fpMedia" readonly
+                                    style="background:#222; color:#aaa; font-size:11px;">
+                            </div>
+
+                            <div class="form-group">
+                                <label>Client Rects</label>
+                                <input type="text" class="form-control" id="fpRects" readonly
+                                    style="background:#222; color:#aaa; font-size:11px;">
+                            </div>
+                            <div class="form-group">
+                                <label>Speech Voices</label>
+                                <input type="text" class="form-control" id="fpSpeech" readonly
+                                    style="background:#222; color:#aaa; font-size:11px;">
+                            </div>
+
+                            <div class="form-group">
+                                <label>Hardware Concurrency</label>
+                                <input type="text" class="form-control" id="fpHardware" readonly
+                                    style="background:#222; color:#aaa; font-size:11px;">
+                            </div>
+                            <div class="form-group">
+                                <label>Device Memory</label>
+                                <input type="text" class="form-control" id="fpMemory" readonly
+                                    style="background:#222; color:#aaa; font-size:11px;">
+                            </div>
+
+                            <div class="form-group">
+                                <label>Device Name</label>
+                                <input type="text" class="form-control" id="fpDeviceName" readonly
+                                    style="background:#222; color:#aaa; font-size:11px;">
+                            </div>
+                            <div class="form-group">
+                                <label>MAC Address</label>
+                                <input type="text" class="form-control" id="fpMac" readonly
+                                    style="background:#222; color:#aaa; font-size:11px;">
+                            </div>
+                            <div class="form-group">
+                                <label>Do Not Track</label>
+                                <input type="text" class="form-control" id="fpDNT" readonly
+                                    style="background:#222; color:#aaa; font-size:11px;">
+                            </div>
+                            <div class="form-group">
+                                <label>Flash</label>
+                                <input type="text" class="form-control" id="fpFlash" readonly
+                                    style="background:#222; color:#aaa; font-size:11px;">
                             </div>
                         </div>
+
                         <div class="form-group" style="padding-top:10px; border-top:1px solid var(--border)">
                             <label>Select Extension from Lib</label>
                             <select class="form-control" id="selExt" onchange="toggleManualExt()">

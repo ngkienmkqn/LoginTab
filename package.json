@@ -1,13 +1,13 @@
 {
     "name": "login-tab",
-    "version": "1.0.4",
+    "version": "2.0.1",
     "description": "Login Tab - Advanced Account Manager with RBAC v2",
     "main": "main.js",
     "scripts": {
         "start": "electron .",
         "build": "electron-builder"
     },
-    "author": "Antigravity",
+    "author": "Nguyễn Trung Kiên",
     "license": "ISC",
     "repository": {
         "type": "git",
@@ -15,18 +15,27 @@
     },
     "dependencies": {
         "adm-zip": "^0.5.16",
+        "camoufox": "^0.1.19",
         "electron-store": "^8.1.0",
+        "filtrex": "^3.1.0",
         "fs-extra": "^11.2.0",
         "hi-base32": "^0.5.1",
         "jsqr": "^1.4.0",
         "lowdb": "^7.0.1",
         "mysql2": "^3.16.0",
         "otplib": "^13.1.0",
+        "playwright": "^1.57.0",
+        "playwright-extra": "^4.3.6",
+        "playwright-extra-plugin-stealth": "^0.0.1",
         "protobufjs": "^8.0.0",
         "proxy-chain": "^2.7.0",
         "puppeteer-core": "^22.6.0",
         "puppeteer-extra": "^3.3.6",
         "puppeteer-extra-plugin-stealth": "^2.11.2",
+        "puppeteer-real-browser": "^1.4.4",
+        "rebrowser-patches": "^1.0.19",
+        "selenium-webdriver": "^4.40.0",
+        "undetected-chromedriver": "^0.0.1-security",
         "uuid": "^9.0.1",
         "winston": "^3.13.0"
     },

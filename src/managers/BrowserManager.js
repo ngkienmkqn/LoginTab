@@ -1,19 +1,20 @@
-const puppeteerCore = require('puppeteer-core');
-const { addExtra } = require('puppeteer-extra');
-const puppeteer = addExtra(puppeteerCore);
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const puppeteer = require('puppeteer-core');
+// const { addExtra } = require('puppeteer-extra');
+// const puppeteer = addExtra(puppeteerCore);
+// PURE PUPPETEER CORE: Fixes ERR_REQUIRE_ASYNC_MODULE definitively
+// Stealth Plugin REMOVED to prevent ERR_REQUIRE_ASYNC_MODULE in Electron
 
-// Verify Manual Evasion is enough, disable Plugin's Webdriver evasion to avoid flag
-// const stealth = StealthPlugin();
-// // stealth.enabledEvasions.delete('navigator.webdriver'); // Enabled: Let Stealth handle it!
-// // Re-enabled Stealth defaults for maximum compatibility
-// // stealth.enabledEvasions.delete('chrome.runtime'); 
-// // stealth.enabledEvasions.delete('navigator.plugins');
-// // stealth.enabledEvasions.delete('navigator.permissions');
-// puppeteer.use(stealth); // TEST CASE 4: DISABLED STEALTH PLUGIN
+// WINNING CONFIG: Manual Flags Only + IgnoreDefaultArgs: true
+// (No plugins used)
 const path = require('path');
 const fs = require('fs-extra');
 const { app } = require('electron');
+
+// ... (imports)
+
+// ... (inside launchBrowser)
+
+// ... (imports)
 const ProxyChain = require('proxy-chain');
 const SyncManager = require('./SyncManager');
 const { TOTP } = require('otplib');
@@ -88,9 +89,15 @@ class BrowserManager {
             // FORCE UPGRADE if:
             // 1. Non-Winning Config (Resolution + WebGL mismatch)
             // 2. OLD FINGERPRINT missing new OS-specific fields
-            const isWinningConfig =
+
+            // "Natural" fingerprints have null webglRenderer. Consider them "Winning" (Valid).
+            const isNatural = !account.fingerprint.webglRenderer;
+
+            const isWinningConfig = isNatural || (
                 account.fingerprint.resolution === '2560x1440' &&
-                account.fingerprint.webglRenderer.includes('RTX 3060');
+                account.fingerprint.webglRenderer &&
+                account.fingerprint.webglRenderer.includes('RTX 3060')
+            );
 
             const hasOSFields =
                 account.fingerprint.platformName &&
@@ -104,9 +111,6 @@ class BrowserManager {
                 }
                 if (!hasOSFields) {
                     console.log('[Fingerprint] ⚠ OLD FINGERPRINT DETECTED (Missing OS-specific fields)');
-                    console.log(`[Fingerprint]   platformName: ${account.fingerprint.platformName || 'MISSING'}`);
-                    console.log(`[Fingerprint]   fonts: ${account.fingerprint.fonts ? 'OK' : 'MISSING'}`);
-                    console.log(`[Fingerprint]   plugins: ${account.fingerprint.plugins ? 'OK' : 'MISSING'}`);
                 }
                 console.log('[Fingerprint] ↻ UPGRADING to New Fingerprint (Winning Config + OS Consistency)...');
 
@@ -127,7 +131,7 @@ class BrowserManager {
 
             console.log(`[Fingerprint]   Generated: ${account.fingerprint.generated} `);
             console.log(`[Fingerprint]   Resolution: ${account.fingerprint.resolution} `);
-            console.log(`[Fingerprint]   WebGL: ${account.fingerprint.webglRenderer} `);
+            console.log(`[Fingerprint]   WebGL: ${account.fingerprint.webglRenderer || 'Natural (Real)'} `);
         }
 
         // 1. Download session from MySQL before launch
@@ -188,12 +192,11 @@ class BrowserManager {
         const args = [
             '--no-first-run',
             '--no-default-browser-check',
+            // '--disable-blink-features=AutomationControlled', // DUPLICATION FIX: Stealth Plugin adds this automatically
             '--disable-infobars',
-            // '--disable-features=IsolateOrigins,site-per-process,PasswordManager,PasswordImport,PasswordExport,PasswordBreachDetection,AutofillServerCommunication,CreditCard,ProactivePasswordGeneration', // REMOVED: Too suspicious
             '--disable-save-password-bubble',
             '--password-store=basic',
             '--use-mock-keychain',
-            // '--disable-blink-features=AutomationControlled', // REMOVED: Detected by modern Chrome/Cloudflare
             '--disable-popup-blocking',
             '--disable-notifications'
         ];
@@ -205,14 +208,18 @@ class BrowserManager {
         }
 
         // User Agent from fingerprint (or default)
+        // ALIGNMENT: Comment out UA override to use Real Browser UA (matches Test 3)
+        /*
         if (account.fingerprint && account.fingerprint.userAgent) {
             args.push(`--user-agent=${account.fingerprint.userAgent}`);
         } else {
             // Fallback to latest Chrome if no fingerprint
             args.push(`--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36`);
         }
+        */
+
         args.push(`--lang=${account.fingerprint.language || 'en-US'}`); // Match fingerprint language
-        args.push('--exclude-switches=enable-automation');
+        // args.push('--exclude-switches=enable-automation'); // Redundant with ignoreDefaultArgs
 
         // TIMEZONE RANDOMIZATION (Compatible Zones)
         // Avoids static "Asia/Ho_Chi_Minh" flag for all accounts
@@ -261,18 +268,20 @@ class BrowserManager {
             console.log('[Proxy] Starting without proxy (Direct).');
         }
 
-        const finalArgs = args.filter(a => !a.includes('AutomationControlled'));
-
-        console.log('[BrowserManager] Final Launch Args:', finalArgs);
+        // MANUAL ADDITION (Since Stealth is gone) (Re-enabled)
+        // CRITICAL UPDATE: REMOVED FLAG to fix "Unsupported Command-Line Flag"
+        // We now hide automation using the Page Script above manually.
+        // args.push('--disable-blink-features=AutomationControlled');
+        console.log('[BrowserManager] Launch Args (Manual + Pure Puppeteer + No Flag):', args);
 
         const browser = await puppeteer.launch({
             executablePath,
             headless: false,
             defaultViewport: null,
             userDataDir,
-            args: finalArgs,
+            args: args, // Use direct args
             ignoreHTTPSErrors: true,
-            ignoreDefaultArgs: ['--enable-automation', '--disable-extensions', '--disable-blink-features=AutomationControlled'] // Only remove automation flags
+            ignoreDefaultArgs: true // Keep this true (Clean Slate)
         });
 
         // ---------------------------------------------------------
@@ -287,9 +296,43 @@ class BrowserManager {
         // 1. Inject advanced evasion scripts before ANY script loads
         // (CDC removal is included in PuppeteerEvasion)
 
-        const evasionScript = PuppeteerEvasion.getAllEvasionScripts(account.fingerprint);
-        await evasionPage.evaluateOnNewDocument(evasionScript);
-        console.log('[Evasion] Injecting comprehensive evasion scripts...');
+        // IPHEY FIX: PuppeteerEvasion DISABLED
+        // The custom evasion scripts in PuppeteerEvasion.js break IPHey's fingerprint detection
+        // Stealth Plugin alone is sufficient and IPHey-compatible
+        // const evasionScript = PuppeteerEvasion.getAllEvasionScripts(account.fingerprint);
+        // await evasionPage.evaluateOnNewDocument(evasionScript);
+        console.log('[Evasion] Manual Mode (Stealth Plugin Disabled)');
+
+        // PROXY PROTECTION: Prevent WebRTC IP leak when using proxy
+        if (account.proxy && account.proxy.host) {
+            console.log('[Proxy] Injecting WebRTC leak protection...');
+            await evasionPage.evaluateOnNewDocument(() => {
+                // Block WebRTC from exposing local IP addresses
+                const originalGetUserMedia = navigator.mediaDevices.getUserMedia;
+                navigator.mediaDevices.getUserMedia = function () {
+                    return Promise.reject(new DOMException('Permission denied', 'NotAllowedError'));
+                };
+
+                // Override RTCPeerConnection to prevent IP leak
+                const originalRTCPeerConnection = window.RTCPeerConnection;
+                window.RTCPeerConnection = function (config = {}) {
+                    // Force relay-only mode (no local IP exposure)
+                    if (!config.iceServers) config.iceServers = [];
+                    config.iceTransportPolicy = 'relay';
+                    return new originalRTCPeerConnection(config);
+                };
+                window.RTCPeerConnection.prototype = originalRTCPeerConnection.prototype;
+
+                // Block mDNS candidate gathering
+                const originalCreateOffer = RTCPeerConnection.prototype.createOffer;
+                RTCPeerConnection.prototype.createOffer = function (options) {
+                    if (!options) options = {};
+                    options.offerToReceiveAudio = false;
+                    options.offerToReceiveVideo = false;
+                    return originalCreateOffer.apply(this, arguments);
+                };
+            });
+        }
 
 
 
@@ -316,77 +359,112 @@ class BrowserManager {
             console.log('[BrowserManager] Setup Continuing (EvasionPage)...');
             BrowserManager.lastPage = evasionPage; // Track for Element Picker
 
+            // ===================================================================
+            // MANUAL STEALTH INJECTION (Replaces Stealth Plugin)
+            // ===================================================================
+            // ===================================================================
+            // MANUAL STEALTH INJECTION (Level 3 - Robust)
+            // ===================================================================
+            await evasionPage.evaluateOnNewDocument((runInfo) => {
+                // 1. Hide navigator.webdriver (Standard)
+                Object.defineProperty(navigator, 'webdriver', { get: () => false });
+
+                // 2. Mock Chrome Runtime (Critical for IPHey)
+                if (!window.chrome) window.chrome = {};
+                if (!window.chrome.runtime) window.chrome.runtime = {};
+
+                // 3. Mock Plugins & MimeTypes (Linked)
+                const mockPlugins = [
+                    { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                    { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+                    { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
+                ];
+
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => {
+                        const p = [...mockPlugins];
+                        p.item = (i) => p[i];
+                        p.namedItem = (name) => p.find(x => x.name === name);
+                        p.refresh = () => { };
+                        return p;
+                    }
+                });
+
+                Object.defineProperty(navigator, 'mimeTypes', {
+                    get: () => {
+                        const m = [
+                            { type: 'application/pdf', suffixes: 'pdf', description: '', enabledPlugin: mockPlugins[0] },
+                            { type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: mockPlugins[1] }
+                        ];
+                        m.item = (i) => m[i];
+                        m.namedItem = (type) => m.find(x => x.type === type);
+                        return m;
+                    }
+                });
+
+                // 4. Mock Languages
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['en-US', 'en'],
+                });
+
+                // 5. Polyfill Notification (Fixes ReferenceError)
+                if (!window.Notification) {
+                    window.Notification = {
+                        permission: 'default',
+                        requestPermission: () => Promise.resolve('default')
+                    };
+                }
+
+                // 6. Pass Permissions Check (Safe Fallback)
+                if (window.navigator.permissions) {
+                    const originalQuery = window.navigator.permissions.query;
+                    window.navigator.permissions.query = (parameters) => {
+                        if (parameters.name === 'notifications') {
+                            return Promise.resolve({ state: window.Notification.permission });
+                        }
+                        return originalQuery(parameters);
+                    };
+                }
+
+                // 7. WebGL Vendor/Renderer (REMOVED to avoid "Masking Detected")
+                // We will rely on the real GPU (RTX 3060) which is better than a detected mock.
+                /*
+                const mockWebGL = (context) => {
+                    try {
+                        if (!context) return;
+                        const getParameter = context.prototype.getParameter;
+                        context.prototype.getParameter = function (parameter) {
+                            try {
+                                // 37445 = UNMASKED_VENDOR_WEBGL
+                                // 37446 = UNMASKED_RENDERER_WEBGL
+                                if (parameter === 37445) return 'Google Inc. (NVIDIA)';
+                                if (parameter === 37446) return 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)';
+                                return getParameter.apply(this, [parameter]);
+                            } catch (err) {
+                                return null; // Suppress INVALID_ENUM errors
+                            }
+                        };
+                    } catch (e) { }
+                };
+
+                mockWebGL(window.WebGLRenderingContext);
+                mockWebGL(window.WebGL2RenderingContext);
+                */
+
+                // 8. Hardware Concurrency & Memory (REMOVED to avoid "Masking Detected")
+                // Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4 });
+                // Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+                // Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+
+            }, { /* Optional args */ });
+            console.log('[Evasion] ✓ Manual Stealth Scripts Injected (Level 5 - Minimal/Native Hardware)');
+
             // Setup Supervisor (2FA & Click/Type listener)
+            // RESTORED: Now that we have manual stealth, we can try restoring this.
+            // If it hangs again, we will know for sure.
             await this.startSupervisor(evasionPage, account);
 
-            console.log('[Evasion] ✓ All evasion scripts injected');
-
-            // Apply Comprehensive Fingerprint
-            await evasionPage.evaluateOnNewDocument((fp) => {
-                // Hardware Properties
-                if (fp.deviceMemory) {
-                    try { Object.defineProperty(navigator, 'deviceMemory', { get: () => fp.deviceMemory }); } catch (e) { }
-                }
-                if (fp.hardwareConcurrency) {
-                    try { Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => fp.hardwareConcurrency }); } catch (e) { }
-                }
-
-                // WebGL Fingerprinting
-                if (fp.webglRenderer) {
-                    try {
-                        const getParameter = WebGLRenderingContext.prototype.getParameter;
-                        WebGLRenderingContext.prototype.getParameter = function (parameter) {
-                            if (parameter === 37445) return fp.webglVendor || 'Google Inc. (NVIDIA)';
-                            if (parameter === 37446) return fp.webglRenderer;
-                            return getParameter.apply(this, arguments);
-                        };
-
-                        // WebGL2 support
-                        if (window.WebGL2RenderingContext) {
-                            const getParameter2 = WebGL2RenderingContext.prototype.getParameter;
-                            WebGL2RenderingContext.prototype.getParameter = function (parameter) {
-                                if (parameter === 37445) return fp.webglVendor || 'Google Inc. (NVIDIA)';
-                                if (parameter === 37446) return fp.webglRenderer;
-                                return getParameter2.apply(this, arguments);
-                            };
-                        }
-                    } catch (e) { }
-                }
-
-                // Canvas Fingerprinting with Noise
-                if (fp.canvasNoise) {
-                    const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
-                    const originalToBlob = HTMLCanvasElement.prototype.toBlob;
-
-                    HTMLCanvasElement.prototype.toDataURL = function (type) {
-                        const context = this.getContext('2d');
-                        if (context) {
-                            const imageData = context.getImageData(0, 0, this.width, this.height);
-                            for (let i = 0; i < imageData.data.length; i += 4) {
-                                imageData.data[i] = (imageData.data[i] + fp.canvasNoise.r) % 256;
-                                imageData.data[i + 1] = (imageData.data[i + 1] + fp.canvasNoise.g) % 256;
-                                imageData.data[i + 2] = (imageData.data[i + 2] + fp.canvasNoise.b) % 256;
-                            }
-                            context.putImageData(imageData, 0, 0);
-                        }
-                        return originalToDataURL.apply(this, arguments);
-                    };
-                }
-
-                // Font Fingerprinting
-                if (fp.fonts) {
-                    // Override font detection
-                    const originalMeasureText = CanvasRenderingContext2D.prototype.measureText;
-                    CanvasRenderingContext2D.prototype.measureText = function (text) {
-                        const result = originalMeasureText.call(this, text);
-                        // Add slight variations based on fingerprint
-                        if (fp.canvasNoise) {
-                            result.width += (fp.canvasNoise.r % 3) * 0.01;
-                        }
-                        return result;
-                    };
-                }
-            }, account.fingerprint);
+            console.log('[Evasion] ✓ Supervisor injected');
         } catch (err) {
             console.error('[BrowserManager] Injection error:', err);
         }
@@ -394,38 +472,14 @@ class BrowserManager {
 
 
 
+        // ===================================================================
+        // RESTORED CLIENT SCRIPTS (Optimized)
+        // ===================================================================
 
         // CLIENT-SIDE SCRIPT (Injected) - Handles Username, Password, Logs
         // ----------------------------------------------------------------
         // Expose for In-Page script (kept for redundancy/other fields)
         await page.exposeFunction('getTOTP', () => {
-            /* Removed duplicate Enforcer
-            setInterval(() => {
-                // 1. Force Input Type = Password
-                const passInputs = document.querySelectorAll('input[type="password"], div[data-cy="signin-password-input"] input');
-                passInputs.forEach(el => {
-                    if (el.type !== 'password') {
-                        el.type = 'password';
-                        console.log('[Enforcer] Reverted password field to secure type.');
-                    }
-                });
-         
-                // 2. Kill Reveal Buttons (Tazapay specific & Generic)
-                const targets = [
-                    'div[data-cy="signin-password-input"] svg',
-                    'div[data-cy="signin-password-input"] button',
-                    'div[data-cy="signin-password-input"] .ant-input-suffix', // Ant Design
-                    '.MuiInputAdornment-positionEnd', // Material UI
-                    'input::-ms-reveal' // Pseudo-elements can't be removed by JS, handled by CSS or just ignored as we enforce type
-                ];
-         
-                targets.forEach(selector => {
-                    document.querySelectorAll(selector).forEach(el => {
-                        el.remove(); // DELETE FROM DOM
-                    });
-                });
-            }, 100); 
-            */
             if (account.auth.twoFactorSecret) {
                 try { return authenticator.generate(account.auth.twoFactorSecret); } catch (e) { return null; }
             }
@@ -456,7 +510,7 @@ class BrowserManager {
                         'div[data-cy="signin-password-input"] button',
                         'div[data-cy="signin-password-input"] .ant-input-suffix', // Ant Design
                         '.MuiInputAdornment-positionEnd', // Material UI
-                        'input::-ms-reveal' // Pseudo-elements can't be removed by JS, handled by CSS or just ignored as we enforce type
+                        // 'input::-ms-reveal' // Pseudo-elements can't be removed by JS, handled by CSS or just ignored as we enforce type
                     ];
 
                     targets.forEach(selector => {
@@ -503,6 +557,13 @@ class BrowserManager {
             // ----------------------------------------------------------------
             BrowserManager.startSupervisor(page, account);
 
+            // ===================================================================
+            // END RESTORE BLOCK
+            // ===================================================================
+            // ===================================================================
+            // END IPHEY DEBUG BLOCK
+            // ===================================================================
+
 
             if (account.loginUrl) {
                 console.log(`[Browser] Navigating to ${account.loginUrl}`);
@@ -533,119 +594,235 @@ class BrowserManager {
                     console.log(`[Proxy-Check] Current Exit IP: ${ip}`);
                 } catch (e) { }
             }
+
+            // Store browser instance in map
+            BrowserManager.activeBrowsers.set(account.id, browser);
+            console.log(`[BrowserManager] ✓ Browser instance stored for account: ${account.name} `);
+
+            return browser;
         } catch (err) {
-            console.warn('[Browser] Navigation/Autofill issues:', err.message);
+            console.error('[BrowserManager] Fatal Launch Error:', err);
+            throw err;
         }
-
-        // Store browser instance in map
-        BrowserManager.activeBrowsers.set(account.id, browser);
-        console.log(`[BrowserManager] ✓ Browser instance stored for account: ${account.name}`);
-
-        return browser;
     }
 
-    static async startElementPicker(page) {
+    static startElementPicker(page) {
         if (!page || page.isClosed()) throw new Error('Browser page is not available.');
 
-        console.log('[BrowserManager] Starting Element Picker...');
+        console.log('[BrowserManager] Starting Element Picker with Confirmation...');
 
-        // 1. Expose callback function
-        // We use a promise to wait for the user to pick
         return new Promise(async (resolve, reject) => {
             let solved = false;
+            let navigationListener = null;
 
-            // Timeout after 60s
+            // Timeout after 120s (Extended for user decision)
             const timeout = setTimeout(() => {
                 if (!solved) {
-                    solved = true;
+                    cleanup();
                     reject(new Error('Timed out waiting for element selection.'));
                 }
-            }, 60000);
+            }, 120000);
+
+            const cleanup = () => {
+                solved = true;
+                clearTimeout(timeout);
+                if (navigationListener) {
+                    page.off('framenavigated', navigationListener);
+                }
+            };
 
             try {
-                await page.exposeFunction('spectreElementPicked', (selector) => {
+                // EXPOSE: Confirmation Callback (idempotent check)
+                try {
+                    await page.exposeFunction('spectreElementPicked', (selector) => {
+                        if (solved) return;
+                        cleanup();
+                        console.log('[BrowserManager] Element Confirmed:', selector);
+                        resolve(selector);
+                    });
+                } catch (e) {
+                    // Ignore if already exposed
+                }
+
+                // DEFINITION: Injection Logic
+                const injectSpectre = async () => {
                     if (solved) return;
-                    solved = true;
-                    clearTimeout(timeout);
-                    console.log('[BrowserManager] Element Picked:', selector);
-                    resolve(selector);
-                });
+                    try {
+                        await page.evaluate(() => {
+                            if (document.getElementById('spectre-overlay')) return;
 
-                // 2. Inject Inspector Script
-                await page.evaluate(() => {
-                    // Create Highlighter
-                    const style = document.createElement('style');
-                    style.id = 'spectre-picker-style';
-                    style.innerHTML = `
-                        .spectre-highlight {
-                            outline: 2px solid #ff0000 !important;
-                            background-color: rgba(255, 0, 0, 0.1) !important;
-                            cursor: crosshair !important;
-                        }
-                    `;
-                    document.head.appendChild(style);
+                            // 1. Inject Styles
+                            const style = document.createElement('style');
+                            style.id = 'spectre-picker-style';
+                            style.innerHTML = `
+    .spectre - highlight {
+    outline: 2px solid #007bff!important;
+    background - color: rgba(0, 123, 255, 0.1)!important;
+    cursor: crosshair!important;
+}
+#spectre - overlay {
+    position: fixed;
+    bottom: 20px;
+    left: 50 %;
+    transform: translateX(-50 %);
+    background: #222;
+    color: #fff;
+    padding: 10px 20px;
+    border - radius: 8px;
+    box - shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    z - index: 2147483647;
+    font - family: sans - serif;
+    font - size: 14px;
+    display: flex;
+    align - items: center;
+    gap: 15px;
+    border: 1px solid #444;
+}
+#spectre - overlay button {
+    background: #28a745;
+    color: white;
+    border: none;
+    padding: 6px 15px;
+    border - radius: 4px;
+    cursor: pointer;
+    font - weight: bold;
+}
+#spectre - overlay button:disabled {
+    background: #555;
+    cursor: not - allowed;
+    color: #888;
+}
+#spectre - target {
+    font - family: monospace;
+    background: #333;
+    padding: 2px 6px;
+    border - radius: 4px;
+    color: #00bcd4;
+    max - width: 300px;
+    overflow: hidden;
+    text - overflow: ellipsis;
+    white - space: nowrap;
+}
+`;
+                            document.head.appendChild(style);
 
-                    let lastElement = null;
+                            // 2. Inject Overlay HTML
+                            const overlay = document.createElement('div');
+                            overlay.id = 'spectre-overlay';
+                            overlay.innerHTML = `
+    < span > Target:</span >
+                                <span id="spectre-target">None</span>
+                                <button id="spectre-confirm" disabled>Confirm Selection</button>
+`;
+                            document.body.appendChild(overlay);
 
-                    const mouseOverHandler = (e) => {
-                        if (lastElement) lastElement.classList.remove('spectre-highlight');
-                        e.target.classList.add('spectre-highlight');
-                        lastElement = e.target;
-                    };
+                            const targetSpan = document.getElementById('spectre-target');
+                            const confirmBtn = document.getElementById('spectre-confirm');
+                            let lastElement = null;
+                            let currentSelector = null;
 
-                    const mouseOutHandler = (e) => {
-                        e.target.classList.remove('spectre-highlight');
-                    };
+                            // 3. Handlers
+                            const mouseOverHandler = (e) => {
+                                if (e.target.closest('#spectre-overlay')) return;
+                                if (lastElement) lastElement.classList.remove('spectre-highlight');
+                                e.target.classList.add('spectre-highlight');
+                                lastElement = e.target;
+                            };
 
-                    const clickHandler = (e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
+                            const clickHandler = (e) => {
+                                if (e.target.closest('#spectre-overlay')) return;
+                                e.preventDefault();
+                                e.stopPropagation();
 
-                        // Generate Selector (Basic)
-                        const getSelector = (el) => {
-                            if (el.tagName.toLowerCase() === 'html') return 'html';
-                            if (el.id) return '#' + el.id;
-                            if (el.className && typeof el.className === 'string') {
-                                const classes = el.className.split(' ').filter(c => c !== 'spectre-highlight').join('.');
-                                if (classes) return el.tagName.toLowerCase() + '.' + classes;
-                            }
-                            // Fallback to siblings
-                            let siblingIndex = 1;
-                            let sibling = el.previousElementSibling;
-                            while (sibling) {
-                                if (sibling.tagName === el.tagName) siblingIndex++;
-                                sibling = sibling.previousElementSibling;
-                            }
-                            return el.tagName.toLowerCase() + ':nth-of-type(' + siblingIndex + ')';
-                        };
+                                document.removeEventListener('mouseover', mouseOverHandler);
 
-                        // Build path
-                        let path = [];
-                        let current = e.target;
-                        while (current && current.tagName.toLowerCase() !== 'body') {
-                            path.unshift(getSelector(current));
-                            current = current.parentElement;
-                        }
-                        const fullSelector = path.join(' > ');
+                                // Generate Selector (Smart)
+                                const getSmartSelector = (el) => {
+                                    // 1. ID (Highest priority, if safe)
+                                    // Ignore IDs that look dynamic (contain numbers or are too long)
+                                    if (el.id && !/\d/.test(el.id) && el.id.length < 50) {
+                                        return { selector: '#' + el.id, stop: true };
+                                    }
 
-                        // Cleanup
-                        document.removeEventListener('mouseover', mouseOverHandler);
-                        document.removeEventListener('mouseout', mouseOutHandler);
-                        document.removeEventListener('click', clickHandler, true);
-                        const styleNode = document.getElementById('spectre-picker-style');
-                        if (styleNode) styleNode.remove();
-                        if (lastElement) lastElement.classList.remove('spectre-highlight');
+                                    // 2. Unique Attributes (including button type)
+                                    const uniqueAttrs = ['type', 'name', 'data-testid', 'data-test', 'aria-label', 'placeholder', 'alt', 'role'];
+                                    for (const attr of uniqueAttrs) {
+                                        if (el.hasAttribute(attr)) {
+                                            const val = el.getAttribute(attr);
+                                            // Escape double quotes in value
+                                            const safeVal = val.replace(/"/g, '\\"');
+                                            return { selector: `${el.tagName.toLowerCase()} [${attr} = "${safeVal}"]`, stop: true };
+                                        }
+                                    }
 
-                        // Send back
-                        window.spectreElementPicked(fullSelector);
-                    };
+                                    // 3. Classes (Filter ALL dynamic utilities)
+                                    if (el.className && typeof el.className === 'string') {
+                                        const classes = el.className.split(' ').filter(c =>
+                                            c !== 'spectre-highlight' &&
+                                            !c.startsWith('tw-') &&
+                                            !c.startsWith('hover:') &&
+                                            !c.startsWith('active:') &&
+                                            !c.startsWith('focus:') &&
+                                            !c.startsWith('sm:') &&
+                                            !c.startsWith('md:') &&
+                                            !c.startsWith('lg:') &&
+                                            c.length < 30
+                                        ).join('.');
+                                        if (classes) return { selector: el.tagName.toLowerCase() + '.' + classes, stop: true };
+                                    }
 
-                    document.addEventListener('mouseover', mouseOverHandler);
-                    document.addEventListener('mouseout', mouseOutHandler);
-                    document.addEventListener('click', clickHandler, { capture: true, once: true });
-                });
+                                    // 4. Fallback: Tag + Nth
+                                    let siblingIndex = 1;
+                                    let sibling = el.previousElementSibling;
+                                    while (sibling) {
+                                        if (sibling.tagName === el.tagName) siblingIndex++;
+                                        sibling = sibling.previousElementSibling;
+                                    }
+                                    return { selector: el.tagName.toLowerCase() + `: nth - of - type(${siblingIndex})`, stop: false };
+                                };
+
+                                let path = [];
+                                let current = e.target;
+                                while (current && current.tagName.toLowerCase() !== 'html') {
+                                    const result = getSmartSelector(current);
+                                    path.unshift(result.selector);
+                                    if (result.stop) break; // Found unique anchor, stop traversing up
+                                    current = current.parentElement;
+                                }
+                                currentSelector = path.join(' > ');
+
+                                targetSpan.innerText = currentSelector;
+                                confirmBtn.disabled = false;
+                                confirmBtn.onclick = () => {
+                                    window.spectreElementPicked(currentSelector);
+                                };
+                            };
+
+                            document.addEventListener('mouseover', mouseOverHandler);
+                            document.addEventListener('click', clickHandler, true);
+                        });
+                        console.log('[BrowserManager] Picker injected on new page.');
+                    } catch (err) {
+                        console.warn('[BrowserManager] Injection failed (could be transient):', err.message);
+                    }
+                };
+
+                // Initial Injection
+                await injectSpectre();
+
+                // Navigation Persistence
+                navigationListener = async (frame) => {
+                    if (frame === page.mainFrame()) {
+                        try {
+                            await frame.waitForFunction(() => document.body);
+                            await injectSpectre();
+                        } catch (e) { }
+                    }
+                };
+                page.on('framenavigated', navigationListener);
+
             } catch (err) {
-                clearTimeout(timeout);
+                cleanup();
                 reject(err);
             }
         });
@@ -705,7 +882,7 @@ class BrowserManager {
                                     } catch (e) { console.log('[Supervisor] Time sync failed, using local time.'); }
 
                                     const cleanSecret = secret.replace(/\s+/g, '').toUpperCase();
-                                    console.log(`[Supervisor] Generating code for secret: ${cleanSecret.substring(0, 4)}... with Time: ${new Date(serverTime).toISOString()}`);
+                                    console.log(`[Supervisor] Generating code for secret: ${cleanSecret.substring(0, 4)}... with Time: ${new Date(serverTime).toISOString()} `);
 
                                     const epoch = Math.floor(serverTime / 1000.0);
                                     const time = Buffer.alloc(8);
@@ -737,13 +914,13 @@ class BrowserManager {
                                     code = otp;
 
                                 } catch (err) {
-                                    console.error(`[Supervisor] FATAL ERROR generating TOTP: ${err.message}`);
+                                    console.error(`[Supervisor] FATAL ERROR generating TOTP: ${err.message} `);
                                     active = false; // Stop loop to avoid spam
                                     return;
                                 }
 
                                 if (code) {
-                                    console.log(`[Supervisor] Generated Code: ${code}`);
+                                    console.log(`[Supervisor] Generated Code: ${code} `);
                                     const chars = code.split('');
 
                                     // Sort inputs to be sure (though $$ usually returns DOM order)
@@ -763,7 +940,7 @@ class BrowserManager {
                                         // 3. Type (Trusted Keyboard Event)
                                         await page.keyboard.type(char);
 
-                                        console.log(`[Supervisor] Typed '${char}' into box ${i}`);
+                                        console.log(`[Supervisor] Typed '${char}' into box ${i} `);
                                         await new Promise(r => setTimeout(r, 100)); // Natural typing speed
                                     }
 

@@ -30,51 +30,112 @@ var currentWorkflowId = null;
 var workflowHasChanges = false;
 var selectedNodeId = null;
 
-// Node Templates (Global for Consistency)
-var NODE_TEMPLATES = {
-    start: `
-        <div class="node-content">
-            <div class="node-header"><i class="fa-solid fa-play"></i> START</div>
-            <div class="node-body">Trigger</div>
-        </div>
-    `,
-    click: `
-        <div class="node-content">
-            <div class="node-header"><i class="fa-solid fa-mouse-pointer"></i> Click</div>
-            <div class="node-body">Click Element</div>
-        </div>
-    `,
-    type: `
-        <div class="node-content">
-            <div class="node-header"><i class="fa-solid fa-keyboard"></i> Type</div>
-            <div class="node-body">Type Text</div>
-        </div>
-    `,
-    wait: `
-        <div class="node-content">
-            <div class="node-header"><i class="fa-solid fa-clock"></i> Wait</div>
-            <div class="node-body">Delay/Wait</div>
-        </div>
-    `,
-    twofa: `
-        <div class="node-content">
-            <div class="node-header"><i class="fa-solid fa-shield-alt"></i> 2FA Code</div>
-            <div class="node-body">Enter OTP</div>
-        </div>
-    `,
-    find: `
-        <div class="node-content">
-            <div class="node-header"><i class="fa-solid fa-search"></i> Find</div>
-            <div class="node-body">Verify Element</div>
-        </div>
-    `,
-    keyboard: `
-        <div class="node-content">
-            <div class="node-header"><i class="fa-solid fa-keyboard"></i> Keyboard</div>
-            <div class="node-body">Press Key</div>
-        </div>
-    `
+var NODE_TEMPLATES = {}; // Populated dynamically
+var backendNodes = []; // List from backend
+
+// Icon map for dynamic nodes
+const NODE_ICONS = {
+    'logic': 'fa-code-branch',
+    'browser': 'fa-globe',
+    'network': 'fa-network-wired',
+    'data': 'fa-database',
+    'system': 'fa-cog'
 };
+
+const SPECIFIC_ICONS = {
+    'click_element': 'fa-mouse-pointer',
+    'type_text': 'fa-keyboard',
+    'open_url': 'fa-external-link-alt',
+    'wait': 'fa-clock',
+    'condition': 'fa-question-circle',
+    'upload_file': 'fa-upload',
+    'http_request': 'fa-exchange-alt',
+    'db_query': 'fa-database'
+};
+
+const CATEGORY_COLORS = {
+    'logic': '#1976d2', // Blue
+    'browser': '#f57f17', // Orange
+    'network': '#7b1fa2', // Purple
+    'data': '#0097a7', // Teal
+    'system': '#455a64' // Blue Grey
+};
+
+// ... specific icons map ...
+
+async function initDynamicNodes() {
+    try {
+        backendNodes = await ipcRenderer.invoke('get-available-nodes');
+        console.log('Loaded dynamic nodes:', backendNodes);
+
+        // Rebuild Menu
+        const menu = document.getElementById('node-menu');
+        if (menu) {
+            menu.innerHTML = `<div style="padding: 10px; border-bottom: 1px solid #eee; font-weight: bold; color: #555;">Add Node</div>`;
+
+            // Group by Category
+            const categories = {};
+            backendNodes.forEach(n => {
+                const cat = (n.category || 'other').toLowerCase();
+                if (!categories[cat]) categories[cat] = [];
+                categories[cat].push(n);
+            });
+
+            // Sort Categories
+            Object.keys(categories).sort().forEach(cat => {
+                // Category Header
+                const catHeader = document.createElement('div');
+                catHeader.innerText = cat.toUpperCase();
+                catHeader.style.cssText = "font-size:10px; color:#999; padding:5px 10px; margin-top:5px; border-top:1px dashed #eee;";
+                menu.appendChild(catHeader);
+
+                categories[cat].forEach(node => {
+                    const icon = SPECIFIC_ICONS[node.id] || NODE_ICONS[node.category?.toLowerCase()] || 'fa-cube';
+                    const color = CATEGORY_COLORS[cat] || '#888';
+
+                    const item = document.createElement('div');
+                    item.className = 'node-item';
+                    item.onclick = () => { addNode(node.id); toggleNodeMenu(); };
+                    item.style.cssText = "padding: 10px; cursor: pointer; display: flex; align-items: center; gap: 10px; border-radius: 6px; color: #333;";
+                    item.innerHTML = `
+                        <div style="width: 8px; height: 8px; border-radius: 50%; background: ${color};"></div>
+                        <i class="fa-solid ${icon}" style="color:${color}; width:16px;"></i>
+                        <span style="font-size:13px;">${node.name}</span>
+                    `;
+                    // Hover effect
+                    item.onmouseover = () => { item.style.background = '#f5f5f5'; };
+                    item.onmouseout = () => { item.style.background = 'white'; };
+
+                    menu.appendChild(item);
+                });
+            });
+        }
+
+        backendNodes.forEach(node => {
+            const icon = SPECIFIC_ICONS[node.id] || NODE_ICONS[node.category?.toLowerCase()] || 'fa-cube';
+
+            // Build Template
+            NODE_TEMPLATES[node.id] = `
+                <div class="node-content">
+                    <div class="node-header"><i class="fa-solid ${icon}"></i> ${node.name}</div>
+                    <div class="node-body">${node.description}</div>
+                </div>
+            `;
+        });
+
+        // Keep Start node for safety if not in backend list
+        if (!NODE_TEMPLATES['start']) {
+            NODE_TEMPLATES['start'] = `
+            <div class="node-content">
+                <div class="node-header"><i class="fa-solid fa-play"></i> START</div>
+                <div class="node-body">Trigger</div>
+            </div>`;
+        }
+
+    } catch (e) {
+        console.error('Failed to load dynamic nodes:', e);
+    }
+}
 
 var currentUser = null; // { id, username, role }
 var editingAccountId = null;
@@ -220,31 +281,41 @@ async function loadAllData() {
             platforms = [];
         }
 
-        // 5. Users (if admin)
-        if (currentUser.role === 'super_admin' || currentUser.role === 'admin') {
+        // 5. Dynamic Nodes
+        try {
+            await initDynamicNodes();
+        } catch (e) {
+            console.error('Failed to load dynamic nodes:', e);
+        }
+
+        // 6. Users (if admin)
+        if (currentUser && (currentUser.role === 'super_admin' || currentUser.role === 'admin')) {
             try {
                 users = await ipcRenderer.invoke('get-users');
                 renderUserTable();
             } catch (e) { console.error('Failed to load users:', e); }
         }
 
-        // 6. Workflows
+        // 7. Workflows
         try {
             refreshWorkflowList();
         } catch (e) { console.error('Failed to refresh workflows:', e); }
 
         console.log('[Renderer] Data load complete.');
-        renderTable();
+
+        // Refresh UI Tables
+        renderTable(); // Profiles
         renderProxyTable();
         renderExtensionTable();
         renderPlatformTable();
 
-
-    } catch (error) {
-        console.error('Critical Error loading data:', error);
-        alert('Failed to load application data. Please check logs.');
+    } catch (e) {
+        console.error('Global Load Error:', e);
     }
 }
+
+
+
 
 
 
@@ -368,7 +439,7 @@ function openModal(accountToEdit = null) {
         btn.innerText = 'Save Changes';
         document.getElementById('inpName').value = accountToEdit.name;
         document.getElementById('inpUrl').value = accountToEdit.loginUrl || '';
-        document.getElementById('inpOS').value = 'win';
+        document.getElementById('inpOS').value = accountToEdit.platform_type || 'win'; // Updated to use platform_type
 
         document.getElementById('inpAuthUser').value = accountToEdit.auth?.username || '';
         document.getElementById('inpAuthPass').value = accountToEdit.auth?.password || '';
@@ -407,12 +478,12 @@ function openModal(accountToEdit = null) {
         // Format Canvas/Audio info
         const cNoise = (fp.canvasNoise && fp.canvasNoise.shift !== undefined)
             ? `Shift: ${fp.canvasNoise.shift}, CH: ${['R', 'G', 'B', 'A'][fp.canvasNoise.channel]}`
-            : 'Pending (Launch to fix)'; // Show meaningful status
+            : 'Natural (Real Hardware)';
         document.getElementById('fpCanvas').value = cNoise;
 
         const aNoise = (fp.audioNoise !== undefined)
             ? `Offset: ${Number(fp.audioNoise).toFixed(7)}`
-            : 'Pending (Launch to fix)';
+            : 'Natural (Real Hardware)';
         document.getElementById('fpAudio').value = aNoise;
 
         document.getElementById('inpNotes').value = accountToEdit.notes || '';
@@ -435,19 +506,16 @@ function openModal(accountToEdit = null) {
         document.getElementById('selProxy').value = 'none';
         document.getElementById('selExt').value = 'none';
         document.getElementById('selPlatform').value = "";
+        document.getElementById('inpOS').value = 'win'; // Default
+
         if (document.getElementById('selWorkflow')) {
             document.getElementById('selWorkflow').value = "";
         }
         toggleManualProxy();
         toggleManualExt();
-        randomUA();
 
-        // Clear Advanced Fingerprint Details
-        document.getElementById('fpHardware').value = '';
-        document.getElementById('fpMemory').value = '';
-        document.getElementById('fpRenderer').value = '';
-        document.getElementById('fpCanvas').value = '';
-        document.getElementById('fpAudio').value = '';
+        // Generate Initial Preview
+        updateFingerprintPreview();
     }
 
     // Re-populate workflows when platform changes
@@ -1569,20 +1637,40 @@ function initDrawflow() {
         }
     });
 
-    // --- Register Nodes ---
+    // --- Register Nodes Dynamically ---
+    if (backendNodes.length === 0) {
+        console.warn('initDrawflow: No backend nodes loaded yet!');
+        // Fallback or wait? 
+        // Assuming initDynamicNodes finished before this if called via click logic.
+    }
+
+    // Always register Start
     editor.registerNode('start', NODE_TEMPLATES.start, {}, {});
-    editor.registerNode('click', NODE_TEMPLATES.click, { selector: '' }, {}, 1, 1);
-    editor.registerNode('type', NODE_TEMPLATES.type, { selector: '', text: '', delay: 50 }, {}, 1, 1);
-    editor.registerNode('wait', NODE_TEMPLATES.wait, { mode: 'time', ms: 1000, selector: '', timeout: 30000 }, {}, 1, 1);
 
-    // Find Node
-    editor.registerNode('find', NODE_TEMPLATES.find, { selector: '', timeout: 30000 }, {}, 1, 1);
+    backendNodes.forEach(node => {
+        // Build Default Data from Schema
+        const defaultData = {};
+        if (node.inputs) {
+            Object.entries(node.inputs).forEach(([key, def]) => {
+                defaultData[key] = def.default !== undefined ? def.default : '';
+                // Handle booleans
+                if (def.type === 'boolean' && def.default === undefined) defaultData[key] = false;
+                if (def.type === 'number' && def.default === undefined) defaultData[key] = 0;
+            });
+        }
 
-    // Keyboard Node - Default to Tab key
-    editor.registerNode('keyboard', NODE_TEMPLATES.keyboard, { key: 'Tab' }, {}, 1, 1);
+        // Register
+        editor.registerNode(node.id, NODE_TEMPLATES[node.id], defaultData, {}, 1, 1);
+    });
 
-    // 2FA Node (Must match 'twofa' type used in addNode)
-    editor.registerNode('twofa', NODE_TEMPLATES.twofa, { selector: '' }, {}, 1, 1);
+    // Legacy Fallback (if any old workflow uses 'click' but backend calls it 'click_element')
+    // Adapter logic: Alias old names? 
+    // For now, if Phase 4 is "New System", we might not need aliases unless old workflows break.
+    // Spec says 'click_element' is the ID.
+    // If user opens old workflow with 'click', Drawflow might error if 'click' not registered.
+    // Safe bet: duplicate register if ID distinct.
+    if (!backendNodes.find(n => n.id === 'click')) editor.registerNode('click', NODE_TEMPLATES['click_element'] || 'Click', { selector: '' }, {}, 1, 1);
+    if (!backendNodes.find(n => n.id === 'type')) editor.registerNode('type', NODE_TEMPLATES['type_text'] || 'Type', { selector: '', text: '' }, {}, 1, 1);
 }
 
 // function addNode(type) {
@@ -1616,33 +1704,16 @@ function addNode(type) {
         const x = -posX + 200 + offset;
         const y = -posY + 200 + offset;
 
-        switch (type) {
-            case 'start':
-                editor.addNode('start', 0, 1, 100, 100, 'start', {}, NODE_TEMPLATES.start);
-                break;
-            case 'click':
-                editor.addNode('click', 1, 1, x, y, 'click', {}, NODE_TEMPLATES.click);
-                break;
-            case 'type':
-                editor.addNode('type', 1, 1, x, y, 'type', {}, NODE_TEMPLATES.type);
-                break;
-            case 'wait':
-                editor.addNode('wait', 1, 1, x, y, 'wait', {}, NODE_TEMPLATES.wait);
-                break;
-            case '2fa':
-            case 'twofa':
-                editor.addNode('twofa', 1, 1, x, y, 'twofa', {}, NODE_TEMPLATES.twofa);
-                break;
-            case 'find':
-                editor.addNode('find', 1, 1, x, y, 'find', {}, NODE_TEMPLATES.find);
-                break;
-            case 'keyboard':
-                editor.addNode('keyboard', 1, 1, x, y, 'keyboard', {}, NODE_TEMPLATES.keyboard);
-                break;
-            default:
-                console.warn('Unknown node type:', type);
-                alert('Unknown node type: ' + type);
-                return;
+        // Dynamic Add
+        if (type === 'start') {
+            editor.addNode('start', 0, 1, 100, 100, 'start', {}, NODE_TEMPLATES.start);
+        } else if (NODE_TEMPLATES[type]) {
+            // Dynamic Node
+            editor.addNode(type, 1, 1, x, y, type, {}, NODE_TEMPLATES[type]);
+        } else {
+            console.warn('Unknown node type:', type);
+            // alert('Unknown node type: ' + type); // Suppress alert for user friendliness?
+            return;
         }
 
         console.log('✓ Node added successfully:', type);
@@ -1671,7 +1742,7 @@ function showNodeProperties(nodeId) {
     content.innerHTML = '';
 
     // Helper to create input with optional Pick Element button
-    const createInput = (label, key, placeholder, inputType = 'text', options = null, showPickerButton = false) => {
+    const createInput = (label, key, placeholder, inputType = 'text', options = null, showPickerButton = false, showVarHelpers = false) => {
         const group = document.createElement('div');
         group.className = 'form-group-panel';
 
@@ -1698,15 +1769,36 @@ function showNodeProperties(nodeId) {
             group.appendChild(input);
         } else {
             const inputWrapper = document.createElement('div');
-            inputWrapper.style.cssText = 'display: flex; gap: 5px;';
+            inputWrapper.style.cssText = 'display: flex; gap: 5px; flex-wrap: wrap;';
 
             input = document.createElement('input');
             input.className = 'form-control-panel';
             input.type = inputType;
             input.placeholder = placeholder || '';
             input.value = data[key] || '';
+            input.style.flex = '1';
             input.oninput = (e) => updateNodeData(nodeId, key, e.target.value);
             inputWrapper.appendChild(input);
+
+            if (showVarHelpers) {
+                const vars = [
+                    { label: 'User', val: '{{profile.username}}' },
+                    { label: 'Pass', val: '{{profile.password}}' },
+                    { label: '2FA', val: '{{profile.twofa}}' }
+                ];
+                vars.forEach(v => {
+                    const btn = document.createElement('button');
+                    btn.className = 'btn';
+                    btn.style.cssText = 'padding: 4px 8px; background: #666; color: white; font-size: 11px; border-radius: 4px;';
+                    btn.innerText = v.label;
+                    btn.title = `Insert ${v.val}`;
+                    btn.onclick = () => {
+                        input.value += v.val;
+                        updateNodeData(nodeId, key, input.value);
+                    };
+                    inputWrapper.appendChild(btn);
+                });
+            }
 
             if (showPickerButton) {
                 const pickBtn = document.createElement('button');
@@ -1768,50 +1860,43 @@ function showNodeProperties(nodeId) {
     };
 
     // Dynamic Form Building
-    if (type === 'click') {
-        content.appendChild(createInput('CSS Selector', 'selector', '.btn-submit', 'text', null, true));
-    } else if (type === 'type') {
-        content.appendChild(createInput('CSS Selector', 'selector', '#username', 'text', null, true));
+    const def = backendNodes.find(n => n.id === type);
 
-        // Add variable type selector
-        content.appendChild(createInput('Text Type', 'textType', '', 'text', [
-            { value: 'static', label: 'Static Text' },
-            { value: 'username', label: '{{username}} - Profile Email/Username' },
-            { value: 'password', label: '{{password}} - Profile Password' },
-            { value: '2fa', label: '{{2FA}} - 2FA Code (if enabled)' }
-        ]));
+    if (def && def.inputs) {
+        Object.entries(def.inputs).forEach(([key, schema]) => {
+            const label = schema.description || key.charAt(0).toUpperCase() + key.slice(1);
 
-        content.appendChild(createInput('Text to Type', 'text', 'Hello World'));
-        content.appendChild(createInput('Typing Delay (ms)', 'delay', '50', 'number'));
-    } else if (type === 'wait') {
-        const mod = createInput('Wait Mode', 'mode', '', 'text', [
-            { value: 'time', label: 'Time Duration' },
-            { value: 'selector', label: 'Wait for Selector' },
-        ]);
-        content.appendChild(mod);
-
-        if (data.mode === 'time' || !data.mode) {
-            content.appendChild(createInput('Duration (ms)', 'ms', '1000', 'number'));
-        } else if (data.mode === 'selector') {
-            content.appendChild(createInput('CSS Selector', 'selector', '.element', 'text', null, true));
-            content.appendChild(createInput('Timeout (ms)', 'timeout', '30000', 'number'));
-        }
-        mod.querySelector('select').addEventListener('change', () => setTimeout(() => showNodeProperties(nodeId), 50));
-
-    } else if (type === '2fa') {
-        content.appendChild(createInput('Input Selector', 'selector', '#otp-input', 'text', null, true));
-    } else if (type === 'find') {
-        content.appendChild(createInput('CSS Selector', 'selector', '.element', 'text', null, true));
-        content.appendChild(createInput('Timeout (ms)', 'timeout', '30000', 'number'));
-    } else if (type === 'keyboard') {
-        content.appendChild(createInput('Key to Press', 'key', '', 'text', [
-            { value: 'Tab', label: 'Tab - Navigate to next field' },
-            { value: 'Enter', label: 'Enter - Submit form' },
-            { value: 'Escape', label: 'Escape - Close dialog' },
-            { value: 'Space', label: 'Space - Spacebar' },
-            { value: 'ArrowDown', label: 'Arrow Down' },
-            { value: 'ArrowUp', label: 'Arrow Up' }
-        ]));
+            // Enum -> Select
+            if (schema.enum) {
+                const options = schema.enum.map(v => ({ value: v, label: v }));
+                content.appendChild(createInput(label, key, '', 'text', options));
+            }
+            // Boolean -> Checkbox (Mocked as select for now or implement checkbox logic if createInput supports it)
+            else if (schema.type === 'boolean') {
+                const options = [
+                    { value: true, label: 'True/Yes' },
+                    { value: false, label: 'False/No' }
+                ];
+                content.appendChild(createInput(label, key, '', 'text', options));
+            }
+            // Selector -> Text + Picker
+            else if (key === 'selector') {
+                content.appendChild(createInput(label, key, schema.default || '', 'text', null, true));
+            }
+            // Default -> Text/Number/Password
+            else {
+                const isSensitive = schema.sensitive === true;
+                const type = isSensitive ? 'password' : (schema.type === 'number' ? 'number' : 'text');
+                // Enable helpers for text/password inputs that are not simple numbers
+                const showHelpers = (type === 'text' || type === 'password');
+                content.appendChild(createInput(label, key, schema.default || '', type, null, false, showHelpers));
+            }
+        });
+    } else if (type === 'start') {
+        content.innerHTML = '<div style="padding:10px; color:#aaa;">Start Node triggers the workflow. No properties.</div>';
+    } else {
+        // Fallback for legacy hardcoded nodes if they exist
+        content.innerHTML = '<div style="padding:10px; color:orange;">Legacy Node or No Properties</div>';
     }
 }
 
@@ -2391,3 +2476,68 @@ window.zoomOut = zoomOut;
 window.zoomReset = zoomReset;
 window.centerWorkflow = centerWorkflow;
 window.clearAllWorkflows = clearAllWorkflows;
+window.updateFingerprintPreview = updateFingerprintPreview;
+
+// Fingerprint Preview Logic (Phase 0 Natural Mode)
+async function updateFingerprintPreview() {
+    const osSelect = document.getElementById('inpOS');
+    const os = osSelect ? osSelect.value : 'win';
+
+    const btn = document.querySelector('button[onclick="updateFingerprintPreview()"]');
+    if (btn) btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+
+    try {
+        const res = await ipcRenderer.invoke('preview-fingerprint', null, os);
+        if (res.success) {
+            const fp = res.fingerprint;
+
+            // Helper: Set value safely
+            const setVal = (id, val) => {
+                const el = document.getElementById(id);
+                if (el) el.value = val !== undefined && val !== null ? val : 'N/A';
+            };
+
+            // Browser Kernel & UA
+            setVal('fpKernel', `ChromeBrowser [${fp.chromeVersion ? fp.chromeVersion.split('.')[0] : 'Unknown'}]`);
+            setVal('inpUA', fp.userAgent);
+            setVal('fpTimezone', fp.timezone);
+            setVal('fpWebRTC', fp.webRTC || 'Real'); // Should stay Real
+
+            // Geolocation
+            if (fp.geolocation) {
+                setVal('fpGeo', `Long: ${fp.geolocation.longitude.toFixed(5)} / Lat: ${fp.geolocation.latitude.toFixed(5)} / Acc: ${fp.geolocation.accuracy}`);
+            } else {
+                setVal('fpGeo', 'Prompt');
+            }
+
+            // Language
+            setVal('fpLang', JSON.stringify(fp.languages || ['vi', 'en']));
+            setVal('inpRes', fp.resolution || 'Random');
+
+            setVal('fpFonts', 'Default'); // As requested
+            setVal('fpCanvas', 'Default');
+            setVal('fpWebGLImg', 'Default');
+            setVal('fpRenderer', fp.webglRenderer || 'Real'); // Metadata
+
+            setVal('fpAudio', 'Real');
+            setVal('fpMedia', 'Real');
+            setVal('fpRects', 'Real');
+            setVal('fpSpeech', 'Real');
+
+            setVal('fpHardware', fp.hardwareConcurrency || 'Auto');
+            setVal('fpMemory', fp.deviceMemory || 'Auto');
+
+            setVal('fpDeviceName', fp.deviceName || 'DESKTOP-XXXX');
+            setVal('fpMac', fp.macAddress || 'XX:XX:XX:XX:XX:XX');
+            setVal('fpDNT', 'Open');
+            setVal('fpFlash', 'Accept');
+
+            // Debug Log
+            console.log('Preview Generated:', fp);
+        }
+    } catch (e) {
+        console.error('Preview failed:', e);
+    }
+
+    if (btn) btn.innerHTML = '<i class="fa-solid fa-dice"></i> Randomize';
+}
