@@ -746,112 +746,111 @@ class BrowserManager {
 
                             console.log(`[Sync] ✓ Periodic backup: ${cookies.length} cookies, ${Object.keys(storageInfo.localStorage).length} localStorage, ${Object.keys(storageInfo.sessionStorage).length} sessionStorage`);
                         }
+                    } else {
+                        clearInterval(cookieSyncInterval);
                     }
-                } else {
-                    clearInterval(cookieSyncInterval);
+                } catch (e) {
+                    console.error('[Sync] Periodic backup error:', e.message);
                 }
-            } catch (e) {
-                console.error('[Sync] Periodic backup error:', e.message);
-            }
-        }, 30000); // Every 30 seconds
+            }, 30000); // Every 30 seconds
 
-        // Also sync on navigation completion
-        page.on('load', async () => {
-            try {
-                // Extract all storage data
-                const storageInfo = await page.evaluate(() => {
-                    const localStorageData = {};
-                    for (let i = 0; i < localStorage.length; i++) {
-                        const key = localStorage.key(i);
-                        localStorageData[key] = localStorage.getItem(key);
-                    }
+            // Also sync on navigation completion
+            page.on('load', async () => {
+                try {
+                    // Extract all storage data
+                    const storageInfo = await page.evaluate(() => {
+                        const localStorageData = {};
+                        for (let i = 0; i < localStorage.length; i++) {
+                            const key = localStorage.key(i);
+                            localStorageData[key] = localStorage.getItem(key);
+                        }
 
-                    const sessionStorageData = {};
-                    for (let i = 0; i < sessionStorage.length; i++) {
-                        const key = sessionStorage.key(i);
-                        sessionStorageData[key] = sessionStorage.getItem(key);
-                    }
+                        const sessionStorageData = {};
+                        for (let i = 0; i < sessionStorage.length; i++) {
+                            const key = sessionStorage.key(i);
+                            sessionStorageData[key] = sessionStorage.getItem(key);
+                        }
 
-                    return {
-                        localStorage: localStorageData,
-                        sessionStorage: sessionStorageData
-                    };
-                });
+                        return {
+                            localStorage: localStorageData,
+                            sessionStorage: sessionStorageData
+                        };
+                    });
 
-                const cookies = await page.cookies();
+                    const cookies = await page.cookies();
 
-                await SyncManager.uploadStorage(account.id, {
-                    cookies,
-                    localStorage: storageInfo.localStorage,
-                    sessionStorage: storageInfo.sessionStorage
-                });
+                    await SyncManager.uploadStorage(account.id, {
+                        cookies,
+                        localStorage: storageInfo.localStorage,
+                        sessionStorage: storageInfo.sessionStorage
+                    });
 
-                console.log(`[Sync] ✓ Page load backup: ${cookies.length} cookies, ${Object.keys(storageInfo.localStorage).length} localStorage, ${Object.keys(storageInfo.sessionStorage).length} sessionStorage`);
-            } catch (e) {
-                console.error('[Sync] Page load sync error:', e.message);
-            }
-        });
+                    console.log(`[Sync] ✓ Page load backup: ${cookies.length} cookies, ${Object.keys(storageInfo.localStorage).length} localStorage, ${Object.keys(storageInfo.sessionStorage).length} sessionStorage`);
+                } catch (e) {
+                    console.error('[Sync] Page load sync error:', e.message);
+                }
+            });
 
-        // Store browser instance in map
-        BrowserManager.activeBrowsers.set(account.id, browser);
-        console.log(`[BrowserManager] ✓ Browser instance stored for account: ${account.name} `);
+            // Store browser instance in map
+            BrowserManager.activeBrowsers.set(account.id, browser);
+            console.log(`[BrowserManager] ✓ Browser instance stored for account: ${account.name} `);
 
-        return browser;
-    } catch(err) {
-        console.error('[BrowserManager] Fatal Launch Error:', err);
-        throw err;
+            return browser;
+        } catch (err) {
+            console.error('[BrowserManager] Fatal Launch Error:', err);
+            throw err;
+        }
     }
-}
 
     static startElementPicker(page) {
-    if (!page || page.isClosed()) throw new Error('Browser page is not available.');
+        if (!page || page.isClosed()) throw new Error('Browser page is not available.');
 
-    console.log('[BrowserManager] Starting Element Picker with Confirmation...');
+        console.log('[BrowserManager] Starting Element Picker with Confirmation...');
 
-    return new Promise(async (resolve, reject) => {
-        let solved = false;
-        let navigationListener = null;
+        return new Promise(async (resolve, reject) => {
+            let solved = false;
+            let navigationListener = null;
 
-        // Timeout after 120s (Extended for user decision)
-        const timeout = setTimeout(() => {
-            if (!solved) {
-                cleanup();
-                reject(new Error('Timed out waiting for element selection.'));
-            }
-        }, 120000);
-
-        const cleanup = () => {
-            solved = true;
-            clearTimeout(timeout);
-            if (navigationListener) {
-                page.off('framenavigated', navigationListener);
-            }
-        };
-
-        try {
-            // EXPOSE: Confirmation Callback (idempotent check)
-            try {
-                await page.exposeFunction('spectreElementPicked', (selector) => {
-                    if (solved) return;
+            // Timeout after 120s (Extended for user decision)
+            const timeout = setTimeout(() => {
+                if (!solved) {
                     cleanup();
-                    console.log('[BrowserManager] Element Confirmed:', selector);
-                    resolve(selector);
-                });
-            } catch (e) {
-                // Ignore if already exposed
-            }
+                    reject(new Error('Timed out waiting for element selection.'));
+                }
+            }, 120000);
 
-            // DEFINITION: Injection Logic
-            const injectSpectre = async () => {
-                if (solved) return;
+            const cleanup = () => {
+                solved = true;
+                clearTimeout(timeout);
+                if (navigationListener) {
+                    page.off('framenavigated', navigationListener);
+                }
+            };
+
+            try {
+                // EXPOSE: Confirmation Callback (idempotent check)
                 try {
-                    await page.evaluate(() => {
-                        if (document.getElementById('spectre-overlay')) return;
+                    await page.exposeFunction('spectreElementPicked', (selector) => {
+                        if (solved) return;
+                        cleanup();
+                        console.log('[BrowserManager] Element Confirmed:', selector);
+                        resolve(selector);
+                    });
+                } catch (e) {
+                    // Ignore if already exposed
+                }
 
-                        // 1. Inject Styles
-                        const style = document.createElement('style');
-                        style.id = 'spectre-picker-style';
-                        style.innerHTML = `
+                // DEFINITION: Injection Logic
+                const injectSpectre = async () => {
+                    if (solved) return;
+                    try {
+                        await page.evaluate(() => {
+                            if (document.getElementById('spectre-overlay')) return;
+
+                            // 1. Inject Styles
+                            const style = document.createElement('style');
+                            style.id = 'spectre-picker-style';
+                            style.innerHTML = `
     .spectre - highlight {
     outline: 2px solid #007bff!important;
     background - color: rgba(0, 123, 255, 0.1)!important;
@@ -901,272 +900,272 @@ class BrowserManager {
     white - space: nowrap;
 }
 `;
-                        document.head.appendChild(style);
+                            document.head.appendChild(style);
 
-                        // 2. Inject Overlay HTML
-                        const overlay = document.createElement('div');
-                        overlay.id = 'spectre-overlay';
-                        overlay.innerHTML = `
+                            // 2. Inject Overlay HTML
+                            const overlay = document.createElement('div');
+                            overlay.id = 'spectre-overlay';
+                            overlay.innerHTML = `
     < span > Target:</span >
                                 <span id="spectre-target">None</span>
                                 <button id="spectre-confirm" disabled>Confirm Selection</button>
 `;
-                        document.body.appendChild(overlay);
+                            document.body.appendChild(overlay);
 
-                        const targetSpan = document.getElementById('spectre-target');
-                        const confirmBtn = document.getElementById('spectre-confirm');
-                        let lastElement = null;
-                        let currentSelector = null;
+                            const targetSpan = document.getElementById('spectre-target');
+                            const confirmBtn = document.getElementById('spectre-confirm');
+                            let lastElement = null;
+                            let currentSelector = null;
 
-                        // 3. Handlers
-                        const mouseOverHandler = (e) => {
-                            if (e.target.closest('#spectre-overlay')) return;
-                            if (lastElement) lastElement.classList.remove('spectre-highlight');
-                            e.target.classList.add('spectre-highlight');
-                            lastElement = e.target;
-                        };
+                            // 3. Handlers
+                            const mouseOverHandler = (e) => {
+                                if (e.target.closest('#spectre-overlay')) return;
+                                if (lastElement) lastElement.classList.remove('spectre-highlight');
+                                e.target.classList.add('spectre-highlight');
+                                lastElement = e.target;
+                            };
 
-                        const clickHandler = (e) => {
-                            if (e.target.closest('#spectre-overlay')) return;
-                            e.preventDefault();
-                            e.stopPropagation();
+                            const clickHandler = (e) => {
+                                if (e.target.closest('#spectre-overlay')) return;
+                                e.preventDefault();
+                                e.stopPropagation();
 
-                            document.removeEventListener('mouseover', mouseOverHandler);
+                                document.removeEventListener('mouseover', mouseOverHandler);
 
-                            // Generate Selector (Smart)
-                            const getSmartSelector = (el) => {
-                                // 1. ID (Highest priority, if safe)
-                                // Ignore IDs that look dynamic (contain numbers or are too long)
-                                if (el.id && !/\d/.test(el.id) && el.id.length < 50) {
-                                    return { selector: '#' + el.id, stop: true };
-                                }
-
-                                // 2. Unique Attributes (including button type)
-                                const uniqueAttrs = ['type', 'name', 'data-testid', 'data-test', 'aria-label', 'placeholder', 'alt', 'role'];
-                                for (const attr of uniqueAttrs) {
-                                    if (el.hasAttribute(attr)) {
-                                        const val = el.getAttribute(attr);
-                                        // Escape double quotes in value
-                                        const safeVal = val.replace(/"/g, '\\"');
-                                        return { selector: `${el.tagName.toLowerCase()} [${attr} = "${safeVal}"]`, stop: true };
+                                // Generate Selector (Smart)
+                                const getSmartSelector = (el) => {
+                                    // 1. ID (Highest priority, if safe)
+                                    // Ignore IDs that look dynamic (contain numbers or are too long)
+                                    if (el.id && !/\d/.test(el.id) && el.id.length < 50) {
+                                        return { selector: '#' + el.id, stop: true };
                                     }
-                                }
 
-                                // 3. Classes (Filter ALL dynamic utilities)
-                                if (el.className && typeof el.className === 'string') {
-                                    const classes = el.className.split(' ').filter(c =>
-                                        c !== 'spectre-highlight' &&
-                                        !c.startsWith('tw-') &&
-                                        !c.startsWith('hover:') &&
-                                        !c.startsWith('active:') &&
-                                        !c.startsWith('focus:') &&
-                                        !c.startsWith('sm:') &&
-                                        !c.startsWith('md:') &&
-                                        !c.startsWith('lg:') &&
-                                        c.length < 30
-                                    ).join('.');
-                                    if (classes) return { selector: el.tagName.toLowerCase() + '.' + classes, stop: true };
-                                }
+                                    // 2. Unique Attributes (including button type)
+                                    const uniqueAttrs = ['type', 'name', 'data-testid', 'data-test', 'aria-label', 'placeholder', 'alt', 'role'];
+                                    for (const attr of uniqueAttrs) {
+                                        if (el.hasAttribute(attr)) {
+                                            const val = el.getAttribute(attr);
+                                            // Escape double quotes in value
+                                            const safeVal = val.replace(/"/g, '\\"');
+                                            return { selector: `${el.tagName.toLowerCase()} [${attr} = "${safeVal}"]`, stop: true };
+                                        }
+                                    }
 
-                                // 4. Fallback: Tag + Nth
-                                let siblingIndex = 1;
-                                let sibling = el.previousElementSibling;
-                                while (sibling) {
-                                    if (sibling.tagName === el.tagName) siblingIndex++;
-                                    sibling = sibling.previousElementSibling;
+                                    // 3. Classes (Filter ALL dynamic utilities)
+                                    if (el.className && typeof el.className === 'string') {
+                                        const classes = el.className.split(' ').filter(c =>
+                                            c !== 'spectre-highlight' &&
+                                            !c.startsWith('tw-') &&
+                                            !c.startsWith('hover:') &&
+                                            !c.startsWith('active:') &&
+                                            !c.startsWith('focus:') &&
+                                            !c.startsWith('sm:') &&
+                                            !c.startsWith('md:') &&
+                                            !c.startsWith('lg:') &&
+                                            c.length < 30
+                                        ).join('.');
+                                        if (classes) return { selector: el.tagName.toLowerCase() + '.' + classes, stop: true };
+                                    }
+
+                                    // 4. Fallback: Tag + Nth
+                                    let siblingIndex = 1;
+                                    let sibling = el.previousElementSibling;
+                                    while (sibling) {
+                                        if (sibling.tagName === el.tagName) siblingIndex++;
+                                        sibling = sibling.previousElementSibling;
+                                    }
+                                    return { selector: el.tagName.toLowerCase() + `: nth - of - type(${siblingIndex})`, stop: false };
+                                };
+
+                                let path = [];
+                                let current = e.target;
+                                while (current && current.tagName.toLowerCase() !== 'html') {
+                                    const result = getSmartSelector(current);
+                                    path.unshift(result.selector);
+                                    if (result.stop) break; // Found unique anchor, stop traversing up
+                                    current = current.parentElement;
                                 }
-                                return { selector: el.tagName.toLowerCase() + `: nth - of - type(${siblingIndex})`, stop: false };
+                                currentSelector = path.join(' > ');
+
+                                targetSpan.innerText = currentSelector;
+                                confirmBtn.disabled = false;
+                                confirmBtn.onclick = () => {
+                                    window.spectreElementPicked(currentSelector);
+                                };
                             };
 
-                            let path = [];
-                            let current = e.target;
-                            while (current && current.tagName.toLowerCase() !== 'html') {
-                                const result = getSmartSelector(current);
-                                path.unshift(result.selector);
-                                if (result.stop) break; // Found unique anchor, stop traversing up
-                                current = current.parentElement;
-                            }
-                            currentSelector = path.join(' > ');
+                            document.addEventListener('mouseover', mouseOverHandler);
+                            document.addEventListener('click', clickHandler, true);
+                        });
+                        console.log('[BrowserManager] Picker injected on new page.');
+                    } catch (err) {
+                        console.warn('[BrowserManager] Injection failed (could be transient):', err.message);
+                    }
+                };
 
-                            targetSpan.innerText = currentSelector;
-                            confirmBtn.disabled = false;
-                            confirmBtn.onclick = () => {
-                                window.spectreElementPicked(currentSelector);
-                            };
-                        };
+                // Initial Injection
+                await injectSpectre();
 
-                        document.addEventListener('mouseover', mouseOverHandler);
-                        document.addEventListener('click', clickHandler, true);
-                    });
-                    console.log('[BrowserManager] Picker injected on new page.');
-                } catch (err) {
-                    console.warn('[BrowserManager] Injection failed (could be transient):', err.message);
-                }
-            };
+                // Navigation Persistence
+                navigationListener = async (frame) => {
+                    if (frame === page.mainFrame()) {
+                        try {
+                            await frame.waitForFunction(() => document.body);
+                            await injectSpectre();
+                        } catch (e) { }
+                    }
+                };
+                page.on('framenavigated', navigationListener);
 
-            // Initial Injection
-            await injectSpectre();
-
-            // Navigation Persistence
-            navigationListener = async (frame) => {
-                if (frame === page.mainFrame()) {
-                    try {
-                        await frame.waitForFunction(() => document.body);
-                        await injectSpectre();
-                    } catch (e) { }
-                }
-            };
-            page.on('framenavigated', navigationListener);
-
-        } catch (err) {
-            cleanup();
-            reject(err);
-        }
-    });
-}
+            } catch (err) {
+                cleanup();
+                reject(err);
+            }
+        });
+    }
 
     static startSupervisor(page, account) {
-    if (!account.auth || !account.auth.twoFactorSecret) return;
+        if (!account.auth || !account.auth.twoFactorSecret) return;
 
-    console.log('[Supervisor] Started. Monitoring for 2FA fields...');
-    let active = true;
-    page.on('close', () => active = false);
-    page.browser().on('disconnected', () => active = false);
+        console.log('[Supervisor] Started. Monitoring for 2FA fields...');
+        let active = true;
+        page.on('close', () => active = false);
+        page.browser().on('disconnected', () => active = false);
 
-    const secret = account.auth.twoFactorSecret;
+        const secret = account.auth.twoFactorSecret;
 
-    async function loop() {
-        while (active) {
-            try {
-                // Check URL for efficiency
-                const url = await page.url();
-                if (url.includes('tazapay') || url.includes('dashboard')) {
+        async function loop() {
+            while (active) {
+                try {
+                    // Check URL for efficiency
+                    const url = await page.url();
+                    if (url.includes('tazapay') || url.includes('dashboard')) {
 
-                    // Look for the specific 6 input fields
-                    const inputs = await page.$$('input[data-cy^="authenticator-authenticate-otp-field-otp-input-"]');
+                        // Look for the specific 6 input fields
+                        const inputs = await page.$$('input[data-cy^="authenticator-authenticate-otp-field-otp-input-"]');
 
-                    // Need exactly 6 visible inputs
-                    if (inputs.length === 6) {
-                        // Check if first is empty
-                        const firstVal = await inputs[0].evaluate(el => el.value);
+                        // Need exactly 6 visible inputs
+                        if (inputs.length === 6) {
+                            // Check if first is empty
+                            const firstVal = await inputs[0].evaluate(el => el.value);
 
-                        if (!firstVal) {
-                            console.log('[Supervisor] 2FA Fields Detected (Empty). Initiating Trusted Input...');
+                            if (!firstVal) {
+                                console.log('[Supervisor] 2FA Fields Detected (Empty). Initiating Trusted Input...');
 
-                            let code = null;
-                            try {
-                                // Custom TOTP Generation (Robust & No-Library-Hell)
-                                const base32 = require('hi-base32');
-                                const crypto = require('crypto');
-
-                                // TIME SYNC: Fetch real time to avoid user clock drift (User PC might be 2026!)
-                                let serverTime = Date.now();
+                                let code = null;
                                 try {
-                                    const fetch = (await import('node-fetch')).default || require('https').get;
-                                    // Simple HEAD request to Google for 'date' header
-                                    await new Promise((resolve) => {
-                                        const req = require('https').request('https://google.com', { method: 'HEAD' }, (res) => {
-                                            if (res.headers.date) {
-                                                const networkTime = new Date(res.headers.date).getTime();
-                                                console.log(`[Supervisor] Network Time: ${new Date(networkTime).toISOString()} (Drift: ${networkTime - Date.now()}ms)`);
-                                                serverTime = networkTime;
-                                            }
-                                            resolve();
+                                    // Custom TOTP Generation (Robust & No-Library-Hell)
+                                    const base32 = require('hi-base32');
+                                    const crypto = require('crypto');
+
+                                    // TIME SYNC: Fetch real time to avoid user clock drift (User PC might be 2026!)
+                                    let serverTime = Date.now();
+                                    try {
+                                        const fetch = (await import('node-fetch')).default || require('https').get;
+                                        // Simple HEAD request to Google for 'date' header
+                                        await new Promise((resolve) => {
+                                            const req = require('https').request('https://google.com', { method: 'HEAD' }, (res) => {
+                                                if (res.headers.date) {
+                                                    const networkTime = new Date(res.headers.date).getTime();
+                                                    console.log(`[Supervisor] Network Time: ${new Date(networkTime).toISOString()} (Drift: ${networkTime - Date.now()}ms)`);
+                                                    serverTime = networkTime;
+                                                }
+                                                resolve();
+                                            });
+                                            req.on('error', () => resolve());
+                                            req.end();
                                         });
-                                        req.on('error', () => resolve());
-                                        req.end();
-                                    });
-                                } catch (e) { console.log('[Supervisor] Time sync failed, using local time.'); }
+                                    } catch (e) { console.log('[Supervisor] Time sync failed, using local time.'); }
 
-                                const cleanSecret = secret.replace(/\s+/g, '').toUpperCase();
-                                console.log(`[Supervisor] Generating code for secret: ${cleanSecret.substring(0, 4)}... with Time: ${new Date(serverTime).toISOString()} `);
+                                    const cleanSecret = secret.replace(/\s+/g, '').toUpperCase();
+                                    console.log(`[Supervisor] Generating code for secret: ${cleanSecret.substring(0, 4)}... with Time: ${new Date(serverTime).toISOString()} `);
 
-                                const epoch = Math.floor(serverTime / 1000.0);
-                                const time = Buffer.alloc(8);
-                                let counter = Math.floor(epoch / 30);
+                                    const epoch = Math.floor(serverTime / 1000.0);
+                                    const time = Buffer.alloc(8);
+                                    let counter = Math.floor(epoch / 30);
 
-                                // Write counter to buffer (Big Endian)
-                                for (let i = 7; i >= 0; i--) {
-                                    time[i] = counter & 0xff;
-                                    counter = counter >>> 8;
+                                    // Write counter to buffer (Big Endian)
+                                    for (let i = 7; i >= 0; i--) {
+                                        time[i] = counter & 0xff;
+                                        counter = counter >>> 8;
+                                    }
+
+                                    // Decode Base32
+                                    const key = Buffer.from(base32.decode.asBytes(cleanSecret));
+
+                                    // HMAC-SHA1
+                                    const hmac = crypto.createHmac('sha1', key);
+                                    hmac.update(time);
+                                    const digest = hmac.digest();
+
+                                    // Truncate
+                                    const offset = digest[digest.length - 1] & 0xf;
+                                    const binary =
+                                        ((digest[offset] & 0x7f) << 24) |
+                                        ((digest[offset + 1] & 0xff) << 16) |
+                                        ((digest[offset + 2] & 0xff) << 8) |
+                                        (digest[offset + 3] & 0xff);
+
+                                    const otp = (binary % 1000000).toString().padStart(6, '0');
+                                    code = otp;
+
+                                } catch (err) {
+                                    console.error(`[Supervisor] FATAL ERROR generating TOTP: ${err.message} `);
+                                    active = false; // Stop loop to avoid spam
+                                    return;
                                 }
 
-                                // Decode Base32
-                                const key = Buffer.from(base32.decode.asBytes(cleanSecret));
+                                if (code) {
+                                    console.log(`[Supervisor] Generated Code: ${code} `);
+                                    const chars = code.split('');
 
-                                // HMAC-SHA1
-                                const hmac = crypto.createHmac('sha1', key);
-                                hmac.update(time);
-                                const digest = hmac.digest();
+                                    // Sort inputs to be sure (though $$ usually returns DOM order)
+                                    // We'll trust Puppeteer's order for now or we could sort by evaluation if needed
 
-                                // Truncate
-                                const offset = digest[digest.length - 1] & 0xf;
-                                const binary =
-                                    ((digest[offset] & 0x7f) << 24) |
-                                    ((digest[offset + 1] & 0xff) << 16) |
-                                    ((digest[offset + 2] & 0xff) << 8) |
-                                    (digest[offset + 3] & 0xff);
+                                    for (let i = 0; i < 6; i++) {
+                                        if (!active) break;
+                                        const char = chars[i];
 
-                                const otp = (binary % 1000000).toString().padStart(6, '0');
-                                code = otp;
+                                        // 1. Hover & Click (Trusted Mouse Event)
+                                        await inputs[i].hover();
+                                        await inputs[i].click();
 
-                            } catch (err) {
-                                console.error(`[Supervisor] FATAL ERROR generating TOTP: ${err.message} `);
-                                active = false; // Stop loop to avoid spam
-                                return;
-                            }
+                                        // 2. Small delay for focus
+                                        await new Promise(r => setTimeout(r, 50));
 
-                            if (code) {
-                                console.log(`[Supervisor] Generated Code: ${code} `);
-                                const chars = code.split('');
+                                        // 3. Type (Trusted Keyboard Event)
+                                        await page.keyboard.type(char);
 
-                                // Sort inputs to be sure (though $$ usually returns DOM order)
-                                // We'll trust Puppeteer's order for now or we could sort by evaluation if needed
+                                        console.log(`[Supervisor] Typed '${char}' into box ${i} `);
+                                        await new Promise(r => setTimeout(r, 100)); // Natural typing speed
+                                    }
 
-                                for (let i = 0; i < 6; i++) {
-                                    if (!active) break;
-                                    const char = chars[i];
+                                    // Submit
+                                    await new Promise(r => setTimeout(r, 500));
+                                    const btn = await page.$('button[data-cy="authenticator-authenticate-authenticator-button"]');
+                                    if (btn) {
+                                        console.log('[Supervisor] Clicking Submit...');
+                                        await btn.click();
 
-                                    // 1. Hover & Click (Trusted Mouse Event)
-                                    await inputs[i].hover();
-                                    await inputs[i].click();
-
-                                    // 2. Small delay for focus
-                                    await new Promise(r => setTimeout(r, 50));
-
-                                    // 3. Type (Trusted Keyboard Event)
-                                    await page.keyboard.type(char);
-
-                                    console.log(`[Supervisor] Typed '${char}' into box ${i} `);
-                                    await new Promise(r => setTimeout(r, 100)); // Natural typing speed
-                                }
-
-                                // Submit
-                                await new Promise(r => setTimeout(r, 500));
-                                const btn = await page.$('button[data-cy="authenticator-authenticate-authenticator-button"]');
-                                if (btn) {
-                                    console.log('[Supervisor] Clicking Submit...');
-                                    await btn.click();
-
-                                    // Back off for a while to let navigation happen
-                                    await new Promise(r => setTimeout(r, 5000));
+                                        // Back off for a while to let navigation happen
+                                        await new Promise(r => setTimeout(r, 5000));
+                                    }
                                 }
                             }
                         }
                     }
+                } catch (e) {
+                    // Ignore context errors (navigating, detaching, etc.)
                 }
-            } catch (e) {
-                // Ignore context errors (navigating, detaching, etc.)
+
+                // Wait before next check
+                await new Promise(r => setTimeout(r, 1500));
             }
-
-            // Wait before next check
-            await new Promise(r => setTimeout(r, 1500));
+            console.log('[Supervisor] Stopped.');
         }
-        console.log('[Supervisor] Stopped.');
-    }
 
-    loop();
-}
+        loop();
+    }
 }
 
 module.exports = BrowserManager;
