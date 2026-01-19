@@ -662,6 +662,41 @@ class BrowserManager {
                     const ip = await page.evaluate(() => fetch('https://api.ipify.org?format=json').then(r => r.json()).then(d => d.ip));
                     console.log(`[Proxy-Check] Current Exit IP: ${ip}`);
                 } catch (e) { }
+
+                // ===================================================================
+                // HYBRID SYNC: Periodic Cookie Backup (Every 30s)
+                // ===================================================================
+                const cookieSyncInterval = setInterval(async () => {
+                    try {
+                        if (browser.isConnected()) {
+                            const allPages = await browser.pages();
+                            if (allPages.length > 0) {
+                                const cookies = await allPages[0].cookies();
+                                if (cookies.length > 0) {
+                                    await SyncManager.uploadCookies(account.id, cookies);
+                                    console.log(`[Sync] ✓ Periodic cookie backup (${cookies.length} cookies)`);
+                                }
+                            }
+                        } else {
+                            clearInterval(cookieSyncInterval);
+                        }
+                    } catch (e) {
+                        console.error('[Sync] Periodic backup error:', e.message);
+                    }
+                }, 30000); // Every 30 seconds
+
+                // Also sync on navigation completion
+                page.on('load', async () => {
+                    try {
+                        const cookies = await page.cookies();
+                        if (cookies.length > 0) {
+                            await SyncManager.uploadCookies(account.id, cookies);
+                            console.log(`[Sync] ✓ Cookies synced on page load (${cookies.length} cookies)`);
+                        }
+                    } catch (e) {
+                        console.error('[Sync] Page load sync error:', e.message);
+                    }
+                });
             }
 
             // Store browser instance in map
