@@ -1,5 +1,29 @@
 # Release History
 
+## [2.2.5] - 2026-01-19
+**"Periodic Sync Actually Works Now"**
+
+### Critical Fixes
+- **Periodic Cookie Sync Not Running:** Moved periodic sync code outside `if (account.loginUrl)` block to ensure it ALWAYS runs for all profiles.
+
+### Technical Details
+**Problem:**
+- Periodic cookie sync was inside `if (account.loginUrl)` conditional block (lines 673-706)
+- If execution path didn't enter this block, periodic sync wouldn't start
+- Result: Tazapay cookies saved after login were never backed up → session lost on reopen
+
+**Solution:**
+- Moved periodic sync (lines 673-706) OUTSIDE the `if (account.loginUrl)` block
+- Now runs for ALL profiles regardless of loginUrl presence
+- `page.on('load')` listener also moved outside to capture all navigations
+
+**User Impact:**
+- Tazapay and similar services will now see: `[Sync] ✓ Periodic cookie backup (X cookies)` in logs
+- All cookies including post-login session tokens will be backed up every 30s
+- Sessions will persist correctly across reopens
+
+
+
 ## [2.2.4] - 2026-01-19
 **"Fingerprint Lock for Session Stability"**
 
