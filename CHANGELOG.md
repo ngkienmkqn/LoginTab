@@ -1,5 +1,19 @@
 # Release History
 
+## [2.2.1] - 2026-01-19
+**"Hotfix: SyncManager Syntax Error"**
+
+### Critical Fixes
+- **SyncManager.js Syntax Error:** Fixed missing closing brace in `downloadSession` method that caused app crash on launch.
+- **Indentation Fix:** Corrected method indentation for `uploadCookies` and `downloadCookies` to proper class level.
+
+### Technical Details
+- Error was introduced during v2.2.0 implementation when adding cookie sync methods
+- Methods were accidentally nested inside `downloadSession` instead of being at class level
+- This hotfix ensures the Hybrid Sync feature works correctly
+
+
+
 ## [2.2.0] - 2026-01-19
 **"The Hybrid Sync Update"**
 
