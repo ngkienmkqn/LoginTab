@@ -104,6 +104,11 @@ class BrowserManager {
                 account.fingerprint.fonts &&
                 account.fingerprint.plugins;
 
+
+            // FINGERPRINT LOCK: Disabled auto-upgrade to maintain session consistency
+            // Tazapay and similar services validate fingerprint changes as suspicious activity
+            // Once fingerprint is generated, it stays locked to prevent session invalidation
+            /*
             if (!isWinningConfig || !hasOSFields) {
                 if (!isWinningConfig) {
                     console.log('[Fingerprint] ⚠ NON-OPTIMAL FINGERPRINT DETECTED');
@@ -128,6 +133,8 @@ class BrowserManager {
                 );
                 console.log('[Fingerprint] ✓ Upgraded & Saved New Fingerprint');
             }
+            */
+            console.log('[Fingerprint] 🔒 Fingerprint locked (no auto-upgrade)');
 
             console.log(`[Fingerprint]   Generated: ${account.fingerprint.generated} `);
             console.log(`[Fingerprint]   Resolution: ${account.fingerprint.resolution} `);

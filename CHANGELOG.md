@@ -1,5 +1,29 @@
 # Release History
 
+## [2.2.4] - 2026-01-19
+**"Fingerprint Lock for Session Stability"**
+
+### Critical Fixes
+- **Fingerprint Auto-Upgrade Disabled:** Locked fingerprint after first generation to prevent session invalidation on services like Tazapay that validate device consistency.
+
+### Technical Details
+**Problem:**
+- Tazapay (and similar services) validate fingerprint + IP consistency across sessions
+- Previous version auto-upgraded fingerprint every launch → Tazapay detected device change → forced logout
+- Google worked fine because it only validates cookies, not full device fingerprint
+
+**Solution:**
+- Commented out fingerprint auto-upgrade logic in `BrowserManager.js` (lines 107-130)
+- Fingerprint now stays locked after first creation
+- Services like Tazapay will maintain session across reopens
+
+**User Impact:**
+- Tazapay sessions now persist correctly (no more forced re-login)
+- Fingerprint remains consistent → no suspicious activity flags
+- Log message: `[Fingerprint] 🔒 Fingerprint locked (no auto-upgrade)`
+
+
+
 ## [2.2.3] - 2026-01-19
 **"Version Display Update"**
 
