@@ -114,6 +114,16 @@ async function initDB() {
             )
         `);
 
+        // COOKIES Table (for Portable/Hybrid Sync)
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS account_cookies (
+                account_id VARCHAR(36) PRIMARY KEY,
+                cookies LONGTEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+            )
+        `);
+
         // WORKFLOWS Table (for Automation System)
         await connection.query(`
             CREATE TABLE IF NOT EXISTS workflows (

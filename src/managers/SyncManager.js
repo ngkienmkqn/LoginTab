@@ -89,7 +89,38 @@ class SyncManager {
             console.error(`[Sync] Download failed for ${accountId}:`, error);
             return false;
         }
+
+    // Upload JSON cookies to MySQL
+    async uploadCookies(accountId, cookies) {
+            if (!cookies || !Array.isArray(cookies)) return;
+            try {
+                const pool = await getPool();
+                await pool.query(
+                    'INSERT INTO account_cookies (account_id, cookies) VALUES (?, ?) ON DUPLICATE KEY UPDATE cookies = VALUES(cookies)',
+                    [accountId, JSON.stringify(cookies)]
+                );
+                console.log(`[Sync] Cookies uploaded for ${accountId} (${cookies.length} count)`);
+            } catch (error) {
+                console.error(`[Sync] Failed to upload cookies for ${accountId}:`, error);
+            }
+        }
+
+    // Download JSON cookies from MySQL
+    async downloadCookies(accountId) {
+            try {
+                const pool = await getPool();
+                const [rows] = await pool.query('SELECT cookies FROM account_cookies WHERE account_id = ?', [accountId]);
+
+                if (rows.length > 0 && rows[0].cookies) {
+                    console.log(`[Sync] Cookies downloaded for ${accountId}`);
+                    return JSON.parse(rows[0].cookies);
+                }
+                return null;
+            } catch (error) {
+                console.error(`[Sync] Failed to download cookies for ${accountId}:`, error);
+                return null;
+            }
+        }
     }
-}
 
 module.exports = new SyncManager();

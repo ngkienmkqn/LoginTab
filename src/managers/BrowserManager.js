@@ -136,6 +136,7 @@ class BrowserManager {
 
         // 1. Download session from MySQL before launch
         await SyncManager.downloadSession(account.id);
+        const jsonCookies = await SyncManager.downloadCookies(account.id);
 
         console.log(`[BrowserManager] Launching: ${account.name} (${account.id})`);
 
@@ -294,6 +295,13 @@ class BrowserManager {
         // ---------------------------------------------------------
         const pages = await browser.pages();
         const evasionPage = pages.length > 0 ? pages[0] : await browser.newPage();
+
+        // HYBRID SYNC: Inject Portable Cookies
+        if (jsonCookies) {
+            console.log(`[Sync] Injecting ${jsonCookies.length} portable cookies...`);
+            await evasionPage.setCookie(...jsonCookies);
+        }
+
         const page = evasionPage; // Restore 'page' alias for downstream compatibility
 
         // 1. Remove "cdc_" property (Puppeteer marker)
