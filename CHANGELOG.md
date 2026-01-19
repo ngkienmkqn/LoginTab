@@ -1,5 +1,29 @@
 # Release History
 
+## [2.3.2] - 2026-01-19
+**"Hide Automation Infobar"**
+
+### UX Improvements
+- **Automation Banner Hidden:** Removed "Chrome is being controlled by automated test software" infobar
+
+### Technical Details
+**Problem:**
+- `ignoreDefaultArgs: true` removed ALL Chrome default args
+- Automation infobar still showed because `--enable-automation` wasn't properly excluded
+- Result: Distracting banner at top of browser
+
+**Solution:**
+- Changed `ignoreDefaultArgs: true` → `ignoreDefaultArgs: ['--enable-automation']`
+- **Uncommented `--disable-blink-features=AutomationControlled`** flag
+- Now properly hides both automation indicators
+
+**User Impact:**
+- No more automation warning banner
+- Browser looks and behaves like normal Chrome
+- Better stealth presentation
+
+
+
 ## [2.3.1] - 2026-01-19
 **"Database Migration Hotfix"**
 

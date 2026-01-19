@@ -280,20 +280,18 @@ class BrowserManager {
             console.log('[Proxy] Starting without proxy (Direct).');
         }
 
-        // MANUAL ADDITION (Since Stealth is gone) (Re-enabled)
-        // CRITICAL UPDATE: REMOVED FLAG to fix "Unsupported Command-Line Flag"
-        // We now hide automation using the Page Script above manually.
-        // args.push('--disable-blink-features=AutomationControlled');
-        console.log('[BrowserManager] Launch Args (Manual + Pure Puppeteer + No Flag):', args);
+        // Hide automation detection
+        args.push('--disable-blink-features=AutomationControlled');
+        console.log('[BrowserManager] Launch Args (Manual + Pure Puppeteer):', args);
 
         const browser = await puppeteer.launch({
             executablePath,
             headless: false,
             defaultViewport: null,
             userDataDir,
-            args: args, // Use direct args
+            args: args,
             ignoreHTTPSErrors: true,
-            ignoreDefaultArgs: true, // Keep this true (Clean Slate)
+            ignoreDefaultArgs: ['--enable-automation'], // Hide "Chrome is being controlled" banner
             pipe: true // CRITICAL: Required for packaged Electron apps to communicate with Chrome
         });
 
