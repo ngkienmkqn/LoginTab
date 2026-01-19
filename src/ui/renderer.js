@@ -219,6 +219,10 @@ function applyPermissions() {
         if (userTab) userTab.style.display = 'block';
         if (dbTab) dbTab.style.display = 'flex';
         if (autoTab) autoTab.style.display = 'flex';
+    } else if (role === 'admin') {
+        if (userTab) userTab.style.display = 'block'; // Admin can manage their staff
+        if (dbTab) dbTab.style.display = 'none';
+        if (autoTab) autoTab.style.display = 'flex';
     } else {
         if (userTab) userTab.style.display = 'none';
         if (dbTab) dbTab.style.display = 'none';
@@ -525,21 +529,21 @@ function openModal(accountToEdit = null) {
     modal.classList.add('active');
 }
 
-function openUserModal(userToEdit = null) {
-    const modal = document.getElementById('userModal');
-    if (userToEdit) {
-        editingUserId = userToEdit.id;
-        document.getElementById('uName').value = userToEdit.username;
-        document.getElementById('uPass').value = userToEdit.password;
-        document.getElementById('uRole').value = userToEdit.role;
-    } else {
-        editingUserId = null;
-        document.getElementById('uName').value = '';
-        document.getElementById('uPass').value = '';
-        document.getElementById('uRole').value = 'staff';
-    }
-    modal.classList.add('active');
-}
+// function openUserModal(userToEdit = null) {
+//     const modal = document.getElementById('userModal');
+//     if (userToEdit) {
+//         editingUserId = userToEdit.id;
+//         document.getElementById('uName').value = userToEdit.username;
+//         document.getElementById('uPass').value = userToEdit.password;
+//         document.getElementById('uRole').value = userToEdit.role;
+//     } else {
+//         editingUserId = null;
+//         document.getElementById('uName').value = '';
+//         document.getElementById('uPass').value = '';
+//         document.getElementById('uRole').value = 'staff';
+//     }
+//     modal.classList.add('active');
+// }
 
 
 function openExtensionModal() { document.getElementById('extensionModal').classList.add('active'); }
@@ -667,25 +671,25 @@ function randomUA() {
 // --- CRUD Logic ---
 
 // USER
-async function saveUser() {
-    const username = document.getElementById('uName').value;
-    const password = document.getElementById('uPass').value;
-    const role = document.getElementById('uRole').value;
+// async function saveUser() {
+//     const username = document.getElementById('uName').value;
+//     const password = document.getElementById('uPass').value;
+//     const role = document.getElementById('uRole').value;
 
-    if (!username || !password) return alert('Missing fields');
+//     if (!username || !password) return alert('Missing fields');
 
-    await ipcRenderer.invoke('save-user', { id: editingUserId, username, password, role });
-    closeModal('userModal');
-    loadAllData();
-}
+//     await ipcRenderer.invoke('save-user', { id: editingUserId, username, password, role });
+//     closeModal('userModal');
+//     loadAllData();
+// }
 
-async function deleteUser(id) {
-    if (confirm('Delete User?')) {
-        const res = await ipcRenderer.invoke('delete-user', id);
-        if (!res.success) alert(res.error);
-        loadAllData();
-    }
-}
+// async function deleteUser(id) {
+//     if (confirm('Delete User?')) {
+//         const res = await ipcRenderer.invoke('delete-user', id);
+//         if (!res.success) alert(res.error);
+//         loadAllData();
+//     }
+// }
 
 
 // PROXY

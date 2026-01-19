@@ -1,8 +1,8 @@
 # RBAC v2 Specification (FROZEN)
 
-**Version:** 2.0.0  
-**Status:** APPROVED & FROZEN  
-**Date:** 2026-01-18  
+**Version:** 2.1.0  
+**Status:** ACTIVE  
+**Date:** 2026-01-19  
 **Amendment Required For:** Any behavioral changes
 
 ---
@@ -69,9 +69,20 @@ if (caller.role === 'admin' && newUser.role === 'staff') {
 **Rule:** RBAC v2 is a clean break. No toggle.
 
 **Non-Negotiable:**
-- ❌ No `enableRBAC` flag
-- ❌ No v1 compatibility layer
 - ❌ No gradual rollout toggle
+
+### Decision 6: Resource Auto-Assignment
+**Rule:** Resources (Profiles) created by a user are AUTOMATICALLY assigned to them.
+**Context:** Admins have scoped visibility (can only see assigned resources). Without auto-assignment, created resources become invisible to the creator.
+
+```javascript
+// Post-Creation Logic
+await pool.query('INSERT IGNORE INTO account_assignments (user_id, account_id) VALUES (?, ?)', [creatorId, newAccountId]);
+```
+
+**Non-Negotiable:**
+- ✅ Creation implies Ownership (via assignment)
+- ✅ Applies to ALL roles (including Super Admin for consistency)
 
 ---
 
@@ -198,9 +209,10 @@ CREATE TABLE audit_log (
 - ✅ Permission management (scope + permission + transaction)
 - ✅ Audit logging for mutations
 - ✅ Renderer cannot spoof caller identity
+- ✅ Profile Visibility (Scoped by Assignment)
+- ✅ Profile Creation (Auto-assigned to Creator)
 
 ### What is NOT Secured (Out of Scope)
-- ❌ Account creation/update (no auth)
 - ❌ Proxy/Extension/Platform CRUD (no auth)
 - ❌ Database reset (CATASTROPHIC - no auth)
 - ❌ Import session (CRITICAL - no validation)

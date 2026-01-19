@@ -562,6 +562,15 @@ ipcMain.handle('create-account', async (event, { name, loginUrl, proxy, fingerpr
                 [id, newAccount.name, newAccount.loginUrl, newAccount.proxy_config, newAccount.auth_config, newAccount.fingerprint_config, newAccount.extensions_path, newAccount.lastActive, newAccount.notes, newAccount.platform_id, newAccount.workflow_id]
             );
 
+            // Auto-assign to creator (Fix for Admin ownership)
+            if (global.currentAuthUser && global.currentAuthUser.id) {
+                await pool.query(
+                    'INSERT IGNORE INTO account_assignments (user_id, account_id) VALUES (?, ?)',
+                    [global.currentAuthUser.id, id]
+                );
+                console.log(`[create-account] Auto-assigned ${id} to creator ${global.currentAuthUser.username}`);
+            }
+
             console.log(`[create-account] ✓ Profile created successfully: ${name}`);
             return { success: true, account: { ...newAccount, proxy, fingerprint, auth } };
 
@@ -1758,11 +1767,33 @@ ipcMain.handle('clear-all-workflows', async (event) => {
 });
 
 ipcMain.handle('get-workflows', async () => {
+    const callerId = global.currentAuthUser?.id;
+    if (!callerId) throw new Error('Not authenticated');
+
     try {
         const pool = await getPool();
-        const [rows] = await pool.query('SELECT id, name, platform, created_at FROM workflows ORDER BY created_at DESC');
+        const [callers] = await pool.query('SELECT role FROM users WHERE id = ?', [callerId]);
+        if (!callers.length) throw new Error('User not found');
+        const role = callers[0].role;
+
+        let query = 'SELECT id, name, platform, created_at, created_by FROM workflows';
+        let params = [];
+
+        if (role === 'super_admin') {
+            // Super Admin sees all
+            query += ' ORDER BY created_at DESC';
+        } else {
+            // Admin sees only their own creation. 
+            // Staff also limited to own creation (if they could create).
+            // NOTE: Future "Assignment" logic will expand this.
+            query += ' WHERE created_by = ? ORDER BY created_at DESC';
+            params = [callerId];
+        }
+
+        const [rows] = await pool.query(query, params);
         return rows;
     } catch (e) {
+        console.error('[get-workflows] Error:', e);
         return [];
     }
 });
