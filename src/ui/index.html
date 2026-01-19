@@ -1564,26 +1564,15 @@
                             </div>
                         </div>
 
-                        <div class="form-group" style="padding-top:10px; border-top:1px solid var(--border)">
-                            <label>Select Extension from Lib</label>
-                            <select class="form-control" id="selExt" onchange="toggleManualExt()">
-                                <option value="none">No Extension</option>
-                                <option value="manual">+ Enter Path Manually...</option>
-                                <!-- Injected Options -->
-                            </select>
-                        </div>
-                        <div id="manualExtArea" class="manual-entry">
-                            <label>Custom Extension Path</label>
-                            <input type="text" class="form-control" id="inpExtPath" placeholder="C:\Extensions\MyExt">
-                        </div>
                     </div>
                 </div>
             </div>
-            <div class="modal-footer">
-                <button class="btn btn-danger" onclick="closeModal('profileModal')">Cancel</button>
-                <button class="btn" onclick="saveProfile()">Save Profile</button>
-            </div>
         </div>
+        <div class="modal-footer">
+            <button class="btn btn-danger" onclick="closeModal('profileModal')">Cancel</button>
+            <button class="btn" onclick="saveProfile()">Save Profile</button>
+        </div>
+    </div>
     </div>
 
     <!-- Proxy Modal -->
