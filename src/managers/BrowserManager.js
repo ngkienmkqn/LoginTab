@@ -145,6 +145,43 @@ class BrowserManager {
         await SyncManager.downloadSession(account.id);
         const storageData = await SyncManager.downloadStorage(account.id);
 
+        console.log(`[BrowserManager] Launching: ${account.name} (${account.id})`);
+
+        // v2.5.1: Use Iron Browser 141 Portable for IPHey 5/5
+        const bundledIronPath = path.join(
+            app.getAppPath(),
+            'resources',
+            'iron',
+            'Iron',
+            'chrome.exe'
+        );
+
+        let executablePath = bundledIronPath;
+
+        // Fallback to system Chrome if Iron not found
+        if (!fs.existsSync(bundledIronPath)) {
+            console.log('[BrowserManager] ⚠️ Iron Browser not found, using system Chrome');
+            const possiblePaths = [
+                'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+                'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+                path.join(require('os').homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe')
+            ];
+
+            for (const p of possiblePaths) {
+                if (fs.existsSync(p)) {
+                    executablePath = p;
+                    break;
+                }
+            }
+        }
+
+        if (!executablePath) throw new Error('Browser executable not found.');
+        console.log(`[BrowserManager] ✓ Using Browser: ${executablePath}`);
+
+        const userDataDir = path.join(app.getPath('userData'), 'sessions', account.id);
+        await fs.ensureDir(userDataDir);
+
+        // DISABLE PASSWORD SAVE POPUP (Edit Preferences File)
         try {
             const prefsDir = path.join(userDataDir, 'Default');
             await fs.ensureDir(prefsDir);
