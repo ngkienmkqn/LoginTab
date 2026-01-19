@@ -298,8 +298,16 @@ class BrowserManager {
 
         // HYBRID SYNC: Inject Portable Cookies
         if (jsonCookies) {
-            console.log(`[Sync] Injecting ${jsonCookies.length} portable cookies...`);
-            await evasionPage.setCookie(...jsonCookies);
+            console.log(`[Sync] ✓ Downloaded ${jsonCookies.length} cookies from DB`);
+            console.log(`[Sync] Cookie domains:`, jsonCookies.map(c => c.domain).join(', '));
+            try {
+                await evasionPage.setCookie(...jsonCookies);
+                console.log(`[Sync] ✓ Cookies injected successfully`);
+            } catch (err) {
+                console.error(`[Sync] ✗ Cookie injection failed:`, err.message);
+            }
+        } else {
+            console.log('[Sync] ⚠ No cookies found in DB for this account');
         }
 
         const page = evasionPage; // Restore 'page' alias for downstream compatibility
@@ -365,14 +373,20 @@ class BrowserManager {
             }
 
             // HYBRID SYNC: Export Cookies before upload
+            console.log('[Sync] Starting cookie export...');
             try {
                 const pages = await browser.pages();
+                console.log(`[Sync] Found ${pages.length} pages`);
                 if (pages.length > 0) {
                     const cookies = await pages[0].cookies();
+                    console.log(`[Sync] ✓ Extracted ${cookies.length} cookies from browser`);
+                    console.log(`[Sync] Cookie domains:`, cookies.map(c => c.domain).join(', '));
                     await SyncManager.uploadCookies(account.id, cookies);
+                } else {
+                    console.warn('[Sync] ⚠ No pages available for cookie extraction');
                 }
             } catch (e) {
-                console.warn('[Sync] Failed to export cookies:', e.message);
+                console.error('[Sync] ✗ Failed to export cookies:', e.message);
             }
 
             await SyncManager.uploadSession(account.id);
