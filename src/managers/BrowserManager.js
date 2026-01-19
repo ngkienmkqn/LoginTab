@@ -204,13 +204,15 @@ class BrowserManager {
         const args = [
             '--no-first-run',
             '--no-default-browser-check',
-            '--disable-blink-features=AutomationControlled', // CRITICAL: Re-enabled for Google Login (Stealth Plugin is NOT active)
-            '--disable-infobars',
+            '--disable-infobars', // v2.5.0: Hide automation infobar
+            '--exclude-switches=enable-automation', // v2.5.0: Hide automation banner
+            '--disable-blink-features=AutomationControlled', // v2.5.0: Remove automation controlled
             '--disable-save-password-bubble',
             '--password-store=basic',
             '--use-mock-keychain',
             '--disable-popup-blocking',
-            '--disable-notifications'
+            '--disable-notifications',
+            `--user-data-dir=${userDataDir}`
         ];
 
         if (account.fingerprint && account.fingerprint.resolution) {
