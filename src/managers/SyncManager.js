@@ -91,36 +91,70 @@ class SyncManager {
         }
     }
 
-    // Upload JSON cookies to MySQL
-    async uploadCookies(accountId, cookies) {
-        if (!cookies || !Array.isArray(cookies)) return;
+
+    // Upload all storage data (cookies + localStorage + sessionStorage) to MySQL
+    async uploadStorage(accountId, storageData) {
         try {
             const pool = await getPool();
+            const { cookies = [], localStorage = {}, sessionStorage = {} } = storageData;
+
             await pool.query(
-                'INSERT INTO account_cookies (account_id, cookies) VALUES (?, ?) ON DUPLICATE KEY UPDATE cookies = VALUES(cookies)',
-                [accountId, JSON.stringify(cookies)]
+                `INSERT INTO account_cookies 
+                 (account_id, cookies, local_storage, session_storage) 
+                 VALUES (?, ?, ?, ?) 
+                 ON DUPLICATE KEY UPDATE 
+                 cookies = VALUES(cookies),
+                 local_storage = VALUES(local_storage),
+                 session_storage = VALUES(session_storage)`,
+                [
+                    accountId,
+                    JSON.stringify(cookies),
+                    JSON.stringify(localStorage),
+                    JSON.stringify(sessionStorage)
+                ]
             );
-            console.log(`[Sync] Cookies uploaded for ${accountId} (${cookies.length} count)`);
+
+            console.log(`[Sync] Storage uploaded for ${accountId} (${cookies.length} cookies, ${Object.keys(localStorage).length} localStorage, ${Object.keys(sessionStorage).length} sessionStorage)`);
         } catch (error) {
-            console.error(`[Sync] Failed to upload cookies for ${accountId}:`, error);
+            console.error(`[Sync] Failed to upload storage for ${accountId}:`, error);
         }
     }
 
-    // Download JSON cookies from MySQL
-    async downloadCookies(accountId) {
+    // Download all storage data from MySQL
+    async downloadStorage(accountId) {
         try {
             const pool = await getPool();
-            const [rows] = await pool.query('SELECT cookies FROM account_cookies WHERE account_id = ?', [accountId]);
+            const [rows] = await pool.query(
+                'SELECT cookies, local_storage, session_storage FROM account_cookies WHERE account_id = ?',
+                [accountId]
+            );
 
-            if (rows.length > 0 && rows[0].cookies) {
-                console.log(`[Sync] Cookies downloaded for ${accountId}`);
-                return JSON.parse(rows[0].cookies);
+            if (rows.length > 0) {
+                const result = {
+                    cookies: rows[0].cookies ? JSON.parse(rows[0].cookies) : [],
+                    localStorage: rows[0].local_storage ? JSON.parse(rows[0].local_storage) : {},
+                    sessionStorage: rows[0].session_storage ? JSON.parse(rows[0].session_storage) : {}
+                };
+
+                console.log(`[Sync] Storage downloaded for ${accountId} (${result.cookies.length} cookies, ${Object.keys(result.localStorage).length} localStorage, ${Object.keys(result.sessionStorage).length} sessionStorage)`);
+                return result;
             }
             return null;
         } catch (error) {
-            console.error(`[Sync] Failed to download cookies for ${accountId}:`, error);
+            console.error(`[Sync] Failed to download storage for ${accountId}:`, error);
             return null;
         }
+    }
+
+    // Legacy method for backward compatibility (wraps uploadStorage)
+    async uploadCookies(accountId, cookies) {
+        await this.uploadStorage(accountId, { cookies });
+    }
+
+    // Legacy method for backward compatibility (wraps downloadStorage)
+    async downloadCookies(accountId) {
+        const storage = await this.downloadStorage(accountId);
+        return storage ? storage.cookies : null;
     }
 }
 

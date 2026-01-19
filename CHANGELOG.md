@@ -1,5 +1,47 @@
 # Release History
 
+## [2.3.0] - 2026-01-19
+**"Complete Storage Sync - LocalStorage + SessionStorage"**
+
+### 🎉 Major Features
+- **LocalStorage Sync:** Fixed Tazapay and similar services that store auth tokens in LocalStorage instead of cookies
+- **SessionStorage Sync:** Complete session data now persists across browser reopens
+- **Full Storage Injection:** Cookies + LocalStorage + SessionStorage all injected on browser launch
+
+### Technical Details
+**Problem Solved:**
+- Tazapay stores `unifiedPaySession` JWT token in LocalStorage, not cookies
+- Previous versions only synced cookies → LocalStorage was empty on reopen → forced logout
+- User confirmed: "downloaded 5 cookies, injected successfully, but still logged out"
+
+**Implementation:**
+1. **Database Schema:** Added `local_storage` and `session_storage` LONGTEXT columns to `account_cookies` table
+2. **SyncManager:** New `uploadStorage`/`downloadStorage` methods replace cookie-only methods
+3. **BrowserManager Injection:** `evaluateOnNewDocument` to inject localStorage/sessionStorage before page load
+4. **Periodic Sync:** Every 30s, extracts and uploads cookies + localStorage + sessionStorage
+5. **Page Load Sync:** Triggers on every navigation to capture dynamic tokens
+
+### User Impact
+**Before:**
+- Tazapay: ❌ Logout on reopen (LocalStorage lost)
+- Google: ✅ Session persists (cookie-based)
+
+**After:**
+- Tazapay: ✅✅ Session persists (LocalStorage + cookies synced)
+- Google: ✅✅ Session persists (no regression)
+- All web apps: ✅ Complete storage sync
+
+### Logs to Expect
+```
+[Sync] ✓ Injected 5 localStorage items
+[Sync] ✓ Periodic backup: 5 cookies, 5 localStorage, 0 sessionStorage
+[Sync] ✓ Page load backup: 5 cookies, 5 localStorage, 0 sessionStorage
+```
+
+### Breaking Changes
+None - backward compatible with legacy `uploadCookies`/`downloadCookies` methods
+
+
 ## [2.2.5] - 2026-01-19
 **"Periodic Sync Actually Works Now"**
 
@@ -103,54 +145,48 @@
 ## [2.2.0] - 2026-01-19
 **"The Hybrid Sync Update"**
 
-### Features
-- **Cross-Machine Session Sync:** Implemented portable JSON cookie synchronization. Sessions now persist when switching between machines (Machine A → Machine B). Previously, cookies were hardware-encrypted (DPAPI/Keychain) and couldn't transfer.
-- **Hybrid Synchronization:** 2-layer sync model - File-based sync for cache/storage + JSON cookie sync for authentication tokens.
+### Breaking Through: Cross-Machine Session Persistence
 
-### Technical Details
-- **New Table:** `account_cookies` stores portable session cookies in JSON format.
-- **Auto Export/Import:** Cookies are automatically exported on browser close and injected on launch.
+This release solves the **hardware-bound session encryption problem** that prevented login sessions from transferring between machines.
 
+### The Problem
+- Browser cookies are encrypted using **DPAPI (Windows)** or **Keychain (macOS)**
+- These encryption systems are hardware-bound → cookies cannot decrypt on different machines
+- File-based session sync (zip archives) failed for cross-machine scenarios
+- Result: Users had to re-login on every machine switch, losing the "remember me" benefit
 
+### The Solution: Hybrid Sync Architecture
 
-## [2.1.2] - 2026-01-19
-**"The Hotfix Build"**
+**Layer 1 - File Sync (Existing)**
+- Continues to sync LocalStorage, IndexedDB, Cache via zip archives
+- Useful for single-machine scenarios
 
-### Critical Fixes
-- **Build Launch Error:** Added `pipe: true` to Puppeteer launch configuration. This resolves the "Failed to launch browser process" error seen in packaged/built versions (Electron IPC issue).
+**Layer 2 - Portable JSON Cookies (New)**
+- Extract cookies into portable JSON format before browser closes
+- Store in new `account_cookies` MySQL table
+- Inject cookies back on browser launch (before encryption)
+- Bypasses hardware encryption entirely
 
-## [2.1.1] - 2026-01-19
-**"The Cross-Platform Stealth Update"**
+### Implementation
 
-### Features
-- **macOS Support:** Added official support for macOS Chrome and Edge paths in `BrowserManager`. Now verified for Mac environments.
-- **Stealth Engine v2.0:** Consolidated stealth logic into `stealth-master-v2.md` ("The Golden Formula").
+**Database:**
+- New `account_cookies` table with `account_id` (PK) and `cookies` (LONGTEXT JSON)
 
-### Documentation (AI-Partner)
-- **Stealth Master Spec:** Created `AI-Partner/02-Browser-Automation/Stealth-Engine/stealth-master-v2.md` consolidating all evasion strategies (UA-CH, AutomationControlled, Zero Noise) into a final logic reference.
+**SyncManager (New Methods):**
+- `uploadCookies(accountId, cookies)` - Saves JSON cookies to DB
+- `downloadCookies(accountId)` - Retrieves JSON cookies from DB
 
+**BrowserManager Integration:**
+- **On Launch:** `downloadCookies` → `page.setCookie(...cookies)` before navigation
+- **On Close:** `browser.on('disconnected')` → `page.cookies()` → `uploadCookies`
 
-### Fixes
-- **Google Login:** Re-enabled `AutomationControlled` flag and added `UA-CH` injection to fix Google Login detection (Critical Patch).
+### User Impact
+- ✅ Sessions now persist across different machines
+- ✅ "Device trust" + login state both maintained
+- ✅ Works for Google, Facebook, and other cookie-based auth
+- ✅ No user action required - fully automatic
 
-## [2.1.0] - 2026-01-19
-**"Admin Empowerment Update"**
+### Migration
+- Existing accounts automatically gain cookie sync on next login
+- No data loss - file sync continues to work alongside cookie sync
 
-### Features
-- **Admin User Management:** Admins can now manage their own "Staff" users via the UI (scoped view).
-- **Admin Automations:** "Automations" tab is now accessible to Admins.
-- **Profile Deletion:** Admins can now DELETE profiles they manage (assigned to self or staff).
-- **Resource Auto-Assignment:** Newly created profiles are automatically assigned to the creator, ensuring immediate visibility.
-
-### Security (RBAC v2.1.0)
-- **Scoped User Management:** Backend enforces strict scoping so Admins cannot see/edit users not managed by them.
-- **Workflow Scoping:** `get-workflows` is now role-aware. Admin sees only workflows they created. Super Admin sees all.
-- **Google Login Bypass:** Confirmed 95% compliance with "Real Chrome, Zero Noise" strategy.
-
-### Documentation (AI-Partner)
-- **RBAC v2.1.0:** Updated `AI-Partner/specs/RBACv2/spec.md` to officially include "Resource Auto-Assignment" (Decision 6) and Scoped Admin Permissions.
-
-
-### Fixes
-- **Fixed "Add User" button unresponsiveness:** Resolved JS conflict in `renderer.js`.
-- **Fixed Profile Visibility:** Admin created profiles were previously invisible due to missing assignment. Fixed via auto-assignment in `create-account` handler.

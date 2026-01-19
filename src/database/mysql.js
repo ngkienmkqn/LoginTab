@@ -119,6 +119,9 @@ async function initDB() {
             CREATE TABLE IF NOT EXISTS account_cookies (
                 account_id VARCHAR(36) PRIMARY KEY,
                 cookies LONGTEXT,
+                local_storage LONGTEXT,
+                session_storage LONGTEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
             )
