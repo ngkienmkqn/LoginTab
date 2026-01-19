@@ -1,5 +1,30 @@
 # Release History
 
+## [2.3.1] - 2026-01-19
+**"Database Migration Hotfix"**
+
+### Critical Fixes
+- **Database Migration:** Auto-migrate existing `account_cookies` table to add `local_storage` and `session_storage` columns
+- **Backward Compatibility:** Users upgrading from v2.2.x will automatically get schema updates on app launch
+
+### Technical Details
+**Problem:**
+- v2.3.0 added new columns to `account_cookies` table
+- `CREATE TABLE IF NOT EXISTS` doesn't alter existing tables
+- Users upgrading from v2.2.x got error: `Unknown column 'local_storage' in 'field list'`
+
+**Solution:**
+- Added migration logic in `mysql.js` that checks for missing columns using `INFORMATION_SCHEMA`
+- Automatically runs `ALTER TABLE` to add missing columns
+- Non-destructive, gracefully handles errors
+
+**User Impact:**
+- Seamless upgrade from any v2.2.x version to v2.3.1
+- No manual SQL commands required
+- Logs show: `[MySQL] Running migration: Adding local_storage column...`
+
+
+
 ## [2.3.0] - 2026-01-19
 **"Complete Storage Sync - LocalStorage + SessionStorage"**
 
