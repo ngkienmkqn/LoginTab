@@ -1,0 +1,2 @@
+If you want to update IronPortable to a newer version, just download the new Package and extract it to a temporary folder.
+Then only copy the "Iron" folder to your current IronPortable directory. Do not copy the Profile folder, because it would overwrite your existing profile data.

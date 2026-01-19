@@ -164,645 +164,670 @@ class BrowserManager {
             if (!p) continue;
             const exists = fs.existsSync(p);
             console.log(`[BrowserManager] Checking path: ${p} -> ${exists}`);
-            if (exists) {
-                executablePath = p;
-                break;
-            }
-        }
-        if (!executablePath) throw new Error('Chrome/Edge executable not found.');
-        console.log(`[BrowserManager] Using executable: ${executablePath}`);
+            console.log(`[BrowserManager] Launching: ${account.name} (${account.id})`);
 
-        const userDataDir = path.join(app.getPath('userData'), 'sessions', account.id);
-        await fs.ensureDir(userDataDir);
+            // v2.5.1: Use Iron Browser 141 Portable for IPHey 5/5
+            const bundledIronPath = path.join(
+                app.getAppPath(),
+                'resources',
+                'iron',
+                'Iron',
+                'chrome.exe' // Iron Browser uses chrome.exe
+            );
 
-        // DISABLE PASSWORD SAVE POPUP (Edit Preferences File)
-        try {
-            const prefsDir = path.join(userDataDir, 'Default');
-            await fs.ensureDir(prefsDir);
-            const prefsPath = path.join(prefsDir, 'Preferences');
+            let executablePath = bundledIronPath;
 
-            let prefs = {};
-            if (await fs.pathExists(prefsPath)) {
-                try {
-                    prefs = await fs.readJson(prefsPath);
-                } catch (e) { console.warn('[Browser] Corrupt prefs, resetting.'); }
-            }
-
-            // Force disable password manager (Unconditional overwrite)
-            prefs.credentials_enable_service = false;
-            prefs.credentials_enable_autosignin = false;
-
-            if (!prefs.profile) prefs.profile = {};
-            prefs.profile.password_manager_enabled = false;
-
-            await fs.writeJson(prefsPath, prefs);
-            console.log('[Browser] Disabled Password Manager Popup via Preferences.');
-        } catch (e) {
-            console.warn('[Browser] Failed to patch preferences:', e);
-        }
-
-        const args = [
-            '--no-first-run',
-            '--no-default-browser-check',
-            '--disable-infobars', // v2.5.0: Hide automation infobar
-            '--exclude-switches=enable-automation', // v2.5.0: Hide automation banner
-            '--disable-blink-features=AutomationControlled', // v2.5.0: Remove automation controlled
-            '--disable-save-password-bubble',
-            '--password-store=basic',
-            '--use-mock-keychain',
-            '--disable-popup-blocking',
-            '--disable-notifications',
-            `--user-data-dir=${userDataDir}`
-        ];
-
-        if (account.fingerprint && account.fingerprint.resolution) {
-            args.push(`--window-size=${account.fingerprint.resolution.replace('x', ',')}`);
-        } else {
-            args.push('--start-maximized');
-        }
-
-        // User Agent from fingerprint (or default)
-        // ALIGNMENT: Comment out UA override to use Real Browser UA (matches Test 3)
-        /*
-        if (account.fingerprint && account.fingerprint.userAgent) {
-            args.push(`--user-agent=${account.fingerprint.userAgent}`);
-        } else {
-            // Fallback to latest Chrome if no fingerprint
-            args.push(`--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36`);
-        }
-        */
-
-        args.push(`--lang=${account.fingerprint.language || 'en-US'}`); // Match fingerprint language
-        // args.push('--exclude-switches=enable-automation'); // Redundant with ignoreDefaultArgs
-
-        // TIMEZONE RANDOMIZATION (Compatible Zones)
-        // Avoids static "Asia/Ho_Chi_Minh" flag for all accounts
-        // Both are UTC+7, indistinguishable but changes the hash slightly
-        const timezones = ['Asia/Ho_Chi_Minh', 'Asia/Bangkok', 'Asia/Jakarta'];
-        process.env.TZ = timezones[Math.floor(Math.random() * timezones.length)];
-
-        let proxyExtensionPath = null;
-        let anonymizedProxyUrl = null;
-
-
-
-
-
-
-
-        if (account.proxy && account.proxy.host && account.proxy.port) {
-            let type = (account.proxy.type || 'http').toLowerCase();
-            let host = account.proxy.host;
-            const port = account.proxy.port;
-            const user = account.proxy.user;
-            const pass = account.proxy.pass;
-
-            if (host.includes(':') && !host.startsWith('[')) {
-                host = `[${host}]`;
-            }
-
-            console.log(`[Proxy] Configuring ${type.toUpperCase()} Proxy via ProxyChain: ${host}:${port} `);
-            let upstreamUrl = `${type}://${host}:${port}`;
-            if (user && pass) {
-                upstreamUrl = `${type}://${user}:${pass}@${host}:${port}`;
-            }
-
-            try {
-                anonymizedProxyUrl = await ProxyChain.anonymizeProxy(upstreamUrl);
-                console.log(`[Proxy] Bridge created: ${anonymizedProxyUrl} -> ${upstreamUrl}`);
-                args.push(`--proxy-server=${anonymizedProxyUrl}`);
-                args.push('--proxy-bypass-list=<-loopback>');
-
-            } catch (err) {
-                console.error('[Proxy] Failed to create proxy bridge:', err);
-                throw new Error('Proxy Connection Failed: ' + err.message);
-            }
-
-        } else {
-            console.log('[Proxy] Starting without proxy (Direct).');
-        }
-
-        // MANUAL ADDITION (Since Stealth is gone) (Re-enabled)
-        // CRITICAL UPDATE: REMOVED FLAG to fix "Unsupported Command-Line Flag"
-        // We now hide automation using the Page Script above manually.
-        // args.push('--disable-blink-features=AutomationControlled');
-        console.log('[BrowserManager] Launch Args (Manual + Pure Puppeteer + No Flag):', args);
-
-        const browser = await puppeteer.launch({
-            executablePath,
-            headless: false,
-            defaultViewport: null,
-            userDataDir,
-            args: args, // Use direct args
-            ignoreHTTPSErrors: true,
-            ignoreDefaultArgs: true, // Keep this true (Clean Slate)
-            pipe: true // CRITICAL: Required for packaged Electron apps to communicate with Chrome
-        });
-
-        // ---------------------------------------------------------
-        // EVASION INJECTION (Critical Step)
-        // ---------------------------------------------------------
-        const pages = await browser.pages();
-        const evasionPage = pages.length > 0 ? pages[0] : await browser.newPage();
-
-        // HYBRID SYNC: Inject All Storage Data (Cookies + LocalStorage + SessionStorage)
-        if (storageData) {
-            // Inject Cookies
-            if (storageData.cookies?.length > 0) {
-                console.log(`[Sync] ✓ Downloaded ${storageData.cookies.length} cookies from DB`);
-                console.log(`[Sync] Cookie domains:`, storageData.cookies.map(c => c.domain).join(', '));
-                try {
-                    await evasionPage.setCookie(...storageData.cookies);
-                    console.log(`[Sync] ✓ Cookies injected successfully`);
-                } catch (err) {
-                    console.error(`[Sync] ✗ Cookie injection failed:`, err.message);
-                }
-            }
-
-            // Inject LocalStorage
-            if (storageData.localStorage && Object.keys(storageData.localStorage).length > 0) {
-                try {
-                    await evasionPage.evaluateOnNewDocument((data) => {
-                        for (const [key, value] of Object.entries(data)) {
-                            localStorage.setItem(key, value);
-                        }
-                    }, storageData.localStorage);
-                    console.log(`[Sync] ✓ Injected ${Object.keys(storageData.localStorage).length} localStorage items`);
-                } catch (err) {
-                    console.error('[Sync] ✗ LocalStorage injection failed:', err.message);
-                }
-            }
-
-            // Inject SessionStorage
-            if (storageData.sessionStorage && Object.keys(storageData.sessionStorage).length > 0) {
-                try {
-                    await evasionPage.evaluateOnNewDocument((data) => {
-                        for (const [key, value] of Object.entries(data)) {
-                            sessionStorage.setItem(key, value);
-                        }
-                    }, storageData.sessionStorage);
-                    console.log(`[Sync] ✓ Injected ${Object.keys(storageData.sessionStorage).length} sessionStorage items`);
-                } catch (err) {
-                    console.error('[Sync] ✗ SessionStorage injection failed:', err.message);
-                }
-            }
-        } else {
-            console.log('[Sync] ⚠ No storage data found in DB for this account');
-        }
-
-        const page = evasionPage; // Restore 'page' alias for downstream compatibility
-
-        // 1. Remove "cdc_" property (Puppeteer marker)
-        // 2. Inject advanced evasion scripts before ANY script loads
-        // 1. Inject advanced evasion scripts before ANY script loads
-        // (CDC removal is included in PuppeteerEvasion)
-
-        // IPHEY FIX: PuppeteerEvasion DISABLED
-        // The custom evasion scripts in PuppeteerEvasion.js break IPHey's fingerprint detection
-        // Stealth Plugin alone is sufficient and IPHey-compatible
-        // const evasionScript = PuppeteerEvasion.getAllEvasionScripts(account.fingerprint);
-        // await evasionPage.evaluateOnNewDocument(evasionScript);
-        console.log('[Evasion] Manual Mode (Stealth Plugin Disabled)');
-
-        // PROXY PROTECTION: Prevent WebRTC IP leak when using proxy
-        if (account.proxy && account.proxy.host) {
-            console.log('[Proxy] Injecting WebRTC leak protection...');
-            await evasionPage.evaluateOnNewDocument(() => {
-                // Block WebRTC from exposing local IP addresses
-                const originalGetUserMedia = navigator.mediaDevices.getUserMedia;
-                navigator.mediaDevices.getUserMedia = function () {
-                    return Promise.reject(new DOMException('Permission denied', 'NotAllowedError'));
-                };
-
-                // Override RTCPeerConnection to prevent IP leak
-                const originalRTCPeerConnection = window.RTCPeerConnection;
-                window.RTCPeerConnection = function (config = {}) {
-                    // Force relay-only mode (no local IP exposure)
-                    if (!config.iceServers) config.iceServers = [];
-                    config.iceTransportPolicy = 'relay';
-                    return new originalRTCPeerConnection(config);
-                };
-                window.RTCPeerConnection.prototype = originalRTCPeerConnection.prototype;
-
-                // Block mDNS candidate gathering
-                const originalCreateOffer = RTCPeerConnection.prototype.createOffer;
-                RTCPeerConnection.prototype.createOffer = function (options) {
-                    if (!options) options = {};
-                    options.offerToReceiveAudio = false;
-                    options.offerToReceiveVideo = false;
-                    return originalCreateOffer.apply(this, arguments);
-                };
-            });
-        }
-
-
-
-
-        browser.on('disconnected', async () => {
-            console.log(`[BrowserManager] Browser closed. Cleaning up...`);
-            BrowserManager.activeBrowsers.delete(account.id);
-
-            if (anonymizedProxyUrl) {
-                try {
-                    await ProxyChain.closeAnonymizedProxy(anonymizedProxyUrl, true);
-                    console.log('[Proxy] Bridge closed.');
-                } catch (e) { console.error('[Proxy] Close error:', e); }
-            }
-            if (proxyExtensionPath) {
-                try { await fs.remove(proxyExtensionPath); } catch (e) { }
-            }
-
-            // HYBRID SYNC: Export Cookies before upload
-            console.log('[Sync] Starting cookie export...');
-            try {
-                const pages = await browser.pages();
-                console.log(`[Sync] Found ${pages.length} pages`);
-                if (pages.length > 0) {
-                    const cookies = await pages[0].cookies();
-                    console.log(`[Sync] ✓ Extracted ${cookies.length} cookies from browser`);
-                    console.log(`[Sync] Cookie domains:`, cookies.map(c => c.domain).join(', '));
-                    await SyncManager.uploadCookies(account.id, cookies);
-                } else {
-                    console.warn('[Sync] ⚠ No pages available for cookie extraction');
-                }
-            } catch (e) {
-                console.error('[Sync] ✗ Failed to export cookies:', e.message);
-            }
-
-            await SyncManager.uploadSession(account.id);
-            console.log(`[Sync] Finished upload for ${account.name}`);
-        });
-
-        // Continue with setup
-        try {
-            console.log('[BrowserManager] Setup Continuing (EvasionPage)...');
-            BrowserManager.lastPage = evasionPage; // Track for Element Picker
-
-            // ===================================================================
-            // MANUAL STEALTH INJECTION (Replaces Stealth Plugin)
-            // ===================================================================
-            // ===================================================================
-            // MANUAL STEALTH INJECTION (Level 3 - Robust)
-            // ===================================================================
-            await evasionPage.evaluateOnNewDocument((runInfo) => {
-                // 1. Hide navigator.webdriver (Standard)
-                Object.defineProperty(navigator, 'webdriver', { get: () => false });
-
-                // 2. Mock Chrome Runtime (Critical for IPHey)
-                if (!window.chrome) window.chrome = {};
-                if (!window.chrome.runtime) window.chrome.runtime = {};
-
-                // 3. Mock Plugins & MimeTypes (Linked)
-                const mockPlugins = [
-                    { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-                    { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
-                    { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
+            // Fallback to system Chrome if Iron not found
+            if (!fs.existsSync(bundledIronPath)) {
+                console.log('[BrowserManager] ⚠️ Iron Browser not found, using system Chrome');
+                const possiblePaths = [
+                    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+                    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+                    path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe')
                 ];
 
-                Object.defineProperty(navigator, 'plugins', {
-                    get: () => {
-                        const p = [...mockPlugins];
-                        p.item = (i) => p[i];
-                        p.namedItem = (name) => p.find(x => x.name === name);
-                        p.refresh = () => { };
-                        return p;
+                for (const p of possiblePaths) {
+                    if (fs.existsSync(p)) {
+                        executablePath = p;
+                        break;
                     }
-                });
-
-                Object.defineProperty(navigator, 'mimeTypes', {
-                    get: () => {
-                        const m = [
-                            { type: 'application/pdf', suffixes: 'pdf', description: '', enabledPlugin: mockPlugins[0] },
-                            { type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: mockPlugins[1] }
-                        ];
-                        m.item = (i) => m[i];
-                        m.namedItem = (type) => m.find(x => x.type === type);
-                        return m;
-                    }
-                });
-
-                // 4. Mock Languages
-                Object.defineProperty(navigator, 'languages', {
-                    get: () => ['en-US', 'en'],
-                });
-
-                // 5. Polyfill Notification (Fixes ReferenceError)
-                if (!window.Notification) {
-                    window.Notification = {
-                        permission: 'default',
-                        requestPermission: () => Promise.resolve('default')
-                    };
                 }
+            }
 
-                // 6. Pass Permissions Check (Safe Fallback)
-                if (window.navigator.permissions) {
-                    const originalQuery = window.navigator.permissions.query;
-                    window.navigator.permissions.query = (parameters) => {
-                        if (parameters.name === 'notifications') {
-                            return Promise.resolve({ state: window.Notification.permission });
-                        }
-                        return originalQuery(parameters);
-                    };
-                }
+            if (!executablePath) throw new Error('Browser executable not found.');
+            console.log(`[BrowserManager] ✓ Using Browser: ${executablePath}`);
 
-                // 7. UA Client Hints (CRITICAL for Google Login)
-                if (navigator.userAgentData) {
-                    const majorVersion = "131";
-                    const fullVersion = "131.0.0.0";
-                    const brands = [
-                        { brand: "Chromium", version: majorVersion },
-                        { brand: "Google Chrome", version: majorVersion },
-                        { brand: "Not=A?Brand", version: "24" }
-                    ];
+            const userDataDir = path.join(app.getPath('userData'), 'sessions', account.id);
+            await fs.ensureDir(userDataDir);
 
-                    Object.defineProperty(navigator, 'userAgentData', {
-                        get: () => ({
-                            brands: brands,
-                            mobile: false,
-                            platform: "Windows",
-                            getHighEntropyValues: (hints) => Promise.resolve({
-                                architecture: "x86",
-                                bitness: "64",
-                                brands: brands,
-                                mobile: false,
-                                model: "",
-                                platform: "Windows",
-                                platformVersion: "15.0.0",
-                                uaFullVersion: fullVersion
-                            }),
-                            toJSON: () => ({ brands, mobile: false, platform: "Windows" })
-                        })
-                    });
-                }
+            // DISABLE PASSWORD SAVE POPUP (Edit Preferences File)
+            try {
+                const prefsDir = path.join(userDataDir, 'Default');
+                await fs.ensureDir(prefsDir);
+                const prefsPath = path.join(prefsDir, 'Preferences');
 
-                // 7. WebGL Vendor/Renderer (REMOVED to avoid "Masking Detected")
-                // We will rely on the real GPU (RTX 3060) which is better than a detected mock.
-                /*
-                const mockWebGL = (context) => {
+                let prefs = {};
+                if (await fs.pathExists(prefsPath)) {
                     try {
-                        if (!context) return;
-                        const getParameter = context.prototype.getParameter;
-                        context.prototype.getParameter = function (parameter) {
-                            try {
-                                // 37445 = UNMASKED_VENDOR_WEBGL
-                                // 37446 = UNMASKED_RENDERER_WEBGL
-                                if (parameter === 37445) return 'Google Inc. (NVIDIA)';
-                                if (parameter === 37446) return 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)';
-                                return getParameter.apply(this, [parameter]);
-                            } catch (err) {
-                                return null; // Suppress INVALID_ENUM errors
-                            }
-                        };
-                    } catch (e) { }
-                };
-
-                mockWebGL(window.WebGLRenderingContext);
-                mockWebGL(window.WebGL2RenderingContext);
-                */
-
-                // 8. Hardware Concurrency & Memory (REMOVED to avoid "Masking Detected")
-                // Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4 });
-                // Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
-                // Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
-
-            }, { /* Optional args */ });
-            console.log('[Evasion] ✓ Manual Stealth Scripts Injected (Level 5 - Minimal/Native Hardware)');
-
-            // Setup Supervisor (2FA & Click/Type listener)
-            // RESTORED: Now that we have manual stealth, we can try restoring this.
-            // If it hangs again, we will know for sure.
-            await this.startSupervisor(evasionPage, account);
-
-            console.log('[Evasion] ✓ Supervisor injected');
-        } catch (err) {
-            console.error('[BrowserManager] Injection error:', err);
-        }
-
-
-
-
-        // ===================================================================
-        // RESTORED CLIENT SCRIPTS (Optimized)
-        // ===================================================================
-
-        // CLIENT-SIDE SCRIPT (Injected) - Handles Username, Password, Logs
-        // ----------------------------------------------------------------
-        // Expose for In-Page script (kept for redundancy/other fields)
-        await page.exposeFunction('getTOTP', () => {
-            if (account.auth.twoFactorSecret) {
-                try { return authenticator.generate(account.auth.twoFactorSecret); } catch (e) { return null; }
-            }
-            return null;
-        });
-
-        await page.exposeFunction('has2FASecret', () => !!account.auth.twoFactorSecret);
-
-        // ----------------------------------------------------------------
-        // CLIENT-SIDE SCRIPT (Injected) - Handles Username, Password, Logs
-        // ----------------------------------------------------------------
-        try {
-            await page.evaluateOnNewDocument((auth) => {
-                // AGGRESSIVE PASSWORD MASKING ENFORCER
-                setInterval(() => {
-                    // 1. Force Input Type = Password
-                    const passInputs = document.querySelectorAll('input[type="password"], div[data-cy="signin-password-input"] input');
-                    passInputs.forEach(el => {
-                        if (el.type !== 'password') {
-                            el.type = 'password';
-                            console.log('[Enforcer] Reverted password field to secure type.');
-                        }
-                    });
-
-                    // 2. Kill Reveal Buttons (Tazapay specific & Generic)
-                    const targets = [
-                        'div[data-cy="signin-password-input"] svg',
-                        'div[data-cy="signin-password-input"] button',
-                        'div[data-cy="signin-password-input"] .ant-input-suffix', // Ant Design
-                        '.MuiInputAdornment-positionEnd', // Material UI
-                        // 'input::-ms-reveal' // Pseudo-elements can't be removed by JS, handled by CSS or just ignored as we enforce type
-                    ];
-
-                    targets.forEach(selector => {
-                        document.querySelectorAll(selector).forEach(el => {
-                            el.remove(); // DELETE FROM DOM
-                        });
-                    });
-                }, 100);
-
-                window.__loginState = { lastAction: 0 };
-                const PLATFORMS = {
-                    'tazapay': {
-                        user: ['div[data-cy="signin-email-data"] input', 'input[placeholder="Enter email address"]'],
-                        pass: ['div[data-cy="signin-password-input"] input', 'input[type="password"]'],
-                        remember: ['input[name="saveSession"]'],
-                        next: ['button[data-cy="signin-button"]'],
-                        // Note: 2FA is now handled by Node-side Supervisor for reliability
-                        twoFactor: ['input[data-cy^="authenticator-authenticate-otp-field-otp-input-"]']
-                    }
-                };
-
-                function isVisible(el) {
-                    if (!el) return false;
-                    const style = window.getComputedStyle(el);
-                    return style.display !== 'none' && style.visibility !== 'hidden' && !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+                        prefs = await fs.readJson(prefsPath);
+                    } catch (e) { console.warn('[Browser] Corrupt prefs, resetting.'); }
                 }
 
-                function triggerEvents(el, val) {
-                    if (!el) return;
-                    el.focus();
-                    el.value = val;
-                    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-                    if (nativeInputValueSetter) nativeInputValueSetter.call(el, val);
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
-                }
+                // Force disable password manager (Unconditional overwrite)
+                prefs.credentials_enable_service = false;
+                prefs.credentials_enable_autosignin = false;
 
-                // Auto-login logic removed as per user request to focus on Workflow Automations.
-                // The previous setInterval loop (lines 301-343) has been deleted.
-            }, account.auth);
+                if (!prefs.profile) prefs.profile = {};
+                prefs.profile.password_manager_enabled = false;
 
-            // ----------------------------------------------------------------
-            // NODE-SIDE SUPERVISOR (Specific for complex interactions like 2FA)
-            // ----------------------------------------------------------------
-            BrowserManager.startSupervisor(page, account);
-
-            // ===================================================================
-            // END RESTORE BLOCK
-            // ===================================================================
-            // ===================================================================
-            // END IPHEY DEBUG BLOCK
-            // ===================================================================
-
-
-            if (account.loginUrl) {
-                console.log(`[Browser] Navigating to ${account.loginUrl}`);
-                try {
-                    await page.goto(account.loginUrl, { waitUntil: 'load', timeout: 60000 });
-                } catch (e) { console.warn('Nav timeout, continuing...'); }
-
-                // Automation Mode Check
-                // Valid modes: 'auto' (default), 'manual'
-                // If mode arg is passed (e.g. from Open button), it overrides DB config
-                const automationMode = (mode || account.automation_mode || 'auto').toLowerCase();
-                console.log(`[BrowserManager] Automation Mode: ${automationMode}`);
-
-                if (automationMode === 'auto' && account.workflow_id) {
-                    await BrowserManager.executeWorkflow(browser, page, account.workflow_id);
-                    // If workflow completes, close browser?
-                    // Usually executeWorkflow closes it, or we close it here.
-                    // For now, let's assume we want to close after auto.
-                    try { await browser.close(); } catch (e) { }
-                } else {
-                    console.log('[BrowserManager] Manual mode or no workflow. Keeping browser open.');
-                }
-
-
-
-                // IP Check
-                try {
-                    const ip = await page.evaluate(() => fetch('https://api.ipify.org?format=json').then(r => r.json()).then(d => d.ip));
-                    console.log(`[Proxy-Check] Current Exit IP: ${ip}`);
-                } catch (e) { }
+                await fs.writeJson(prefsPath, prefs);
+                console.log('[Browser] Disabled Password Manager Popup via Preferences.');
+            } catch (e) {
+                console.warn('[Browser] Failed to patch preferences:', e);
             }
 
-            // ===================================================================
-            // HYBRID SYNC: Periodic Storage Backup (Every 30s)
-            // Moved outside loginUrl block to ensure it ALWAYS runs
-            // =================================================================== 
-            const cookieSyncInterval = setInterval(async () => {
-                try {
-                    if (browser.isConnected()) {
-                        const allPages = await browser.pages();
-                        if (allPages.length > 0) {
-                            const page = allPages[0];
+            const args = [
+                '--no-first-run',
+                '--no-default-browser-check',
+                '--disable-infobars', // v2.5.0: Hide automation infobar
+                '--exclude-switches=enable-automation', // v2.5.0: Hide automation banner
+                '--disable-blink-features=AutomationControlled', // v2.5.0: Remove automation controlled
+                '--disable-save-password-bubble',
+                '--password-store=basic',
+                '--use-mock-keychain',
+                '--disable-popup-blocking',
+                '--disable-notifications',
+                `--user-data-dir=${userDataDir}`
+            ];
 
-                            // Extract all storage data
-                            const storageInfo = await page.evaluate(() => {
-                                const localStorageData = {};
-                                for (let i = 0; i < localStorage.length; i++) {
-                                    const key = localStorage.key(i);
-                                    localStorageData[key] = localStorage.getItem(key);
-                                }
+            if (account.fingerprint && account.fingerprint.resolution) {
+                args.push(`--window-size=${account.fingerprint.resolution.replace('x', ',')}`);
+            } else {
+                args.push('--start-maximized');
+            }
 
-                                const sessionStorageData = {};
-                                for (let i = 0; i < sessionStorage.length; i++) {
-                                    const key = sessionStorage.key(i);
-                                    sessionStorageData[key] = sessionStorage.getItem(key);
-                                }
+            // User Agent from fingerprint (or default)
+            // ALIGNMENT: Comment out UA override to use Real Browser UA (matches Test 3)
+            /*
+            if (account.fingerprint && account.fingerprint.userAgent) {
+                args.push(`--user-agent=${account.fingerprint.userAgent}`);
+            } else {
+                // Fallback to latest Chrome if no fingerprint
+                args.push(`--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36`);
+            }
+            */
 
-                                return {
-                                    localStorage: localStorageData,
-                                    sessionStorage: sessionStorageData
-                                };
-                            });
+            args.push(`--lang=${account.fingerprint.language || 'en-US'}`); // Match fingerprint language
+            // args.push('--exclude-switches=enable-automation'); // Redundant with ignoreDefaultArgs
 
-                            // Get cookies
-                            const cookies = await page.cookies();
+            // TIMEZONE RANDOMIZATION (Compatible Zones)
+            // Avoids static "Asia/Ho_Chi_Minh" flag for all accounts
+            // Both are UTC+7, indistinguishable but changes the hash slightly
+            const timezones = ['Asia/Ho_Chi_Minh', 'Asia/Bangkok', 'Asia/Jakarta'];
+            process.env.TZ = timezones[Math.floor(Math.random() * timezones.length)];
 
-                            // Upload everything
-                            await SyncManager.uploadStorage(account.id, {
-                                cookies,
-                                localStorage: storageInfo.localStorage,
-                                sessionStorage: storageInfo.sessionStorage
-                            });
+            let proxyExtensionPath = null;
+            let anonymizedProxyUrl = null;
 
-                            console.log(`[Sync] ✓ Periodic backup: ${cookies.length} cookies, ${Object.keys(storageInfo.localStorage).length} localStorage, ${Object.keys(storageInfo.sessionStorage).length} sessionStorage`);
-                        }
-                    } else {
-                        clearInterval(cookieSyncInterval);
-                    }
-                } catch (e) {
-                    console.error('[Sync] Periodic backup error:', e.message);
+
+
+
+
+
+
+            if (account.proxy && account.proxy.host && account.proxy.port) {
+                let type = (account.proxy.type || 'http').toLowerCase();
+                let host = account.proxy.host;
+                const port = account.proxy.port;
+                const user = account.proxy.user;
+                const pass = account.proxy.pass;
+
+                if (host.includes(':') && !host.startsWith('[')) {
+                    host = `[${host}]`;
                 }
-            }, 30000); // Every 30 seconds
 
-            // Also sync on navigation completion
-            page.on('load', async () => {
-                try {
-                    // Extract all storage data
-                    const storageInfo = await page.evaluate(() => {
-                        const localStorageData = {};
-                        for (let i = 0; i < localStorage.length; i++) {
-                            const key = localStorage.key(i);
-                            localStorageData[key] = localStorage.getItem(key);
-                        }
-
-                        const sessionStorageData = {};
-                        for (let i = 0; i < sessionStorage.length; i++) {
-                            const key = sessionStorage.key(i);
-                            sessionStorageData[key] = sessionStorage.getItem(key);
-                        }
-
-                        return {
-                            localStorage: localStorageData,
-                            sessionStorage: sessionStorageData
-                        };
-                    });
-
-                    const cookies = await page.cookies();
-
-                    await SyncManager.uploadStorage(account.id, {
-                        cookies,
-                        localStorage: storageInfo.localStorage,
-                        sessionStorage: storageInfo.sessionStorage
-                    });
-
-                    console.log(`[Sync] ✓ Page load backup: ${cookies.length} cookies, ${Object.keys(storageInfo.localStorage).length} localStorage, ${Object.keys(storageInfo.sessionStorage).length} sessionStorage`);
-                } catch (e) {
-                    console.error('[Sync] Page load sync error:', e.message);
+                console.log(`[Proxy] Configuring ${type.toUpperCase()} Proxy via ProxyChain: ${host}:${port} `);
+                let upstreamUrl = `${type}://${host}:${port}`;
+                if (user && pass) {
+                    upstreamUrl = `${type}://${user}:${pass}@${host}:${port}`;
                 }
+
+                try {
+                    anonymizedProxyUrl = await ProxyChain.anonymizeProxy(upstreamUrl);
+                    console.log(`[Proxy] Bridge created: ${anonymizedProxyUrl} -> ${upstreamUrl}`);
+                    args.push(`--proxy-server=${anonymizedProxyUrl}`);
+                    args.push('--proxy-bypass-list=<-loopback>');
+
+                } catch (err) {
+                    console.error('[Proxy] Failed to create proxy bridge:', err);
+                    throw new Error('Proxy Connection Failed: ' + err.message);
+                }
+
+            } else {
+                console.log('[Proxy] Starting without proxy (Direct).');
+            }
+
+            // MANUAL ADDITION (Since Stealth is gone) (Re-enabled)
+            // CRITICAL UPDATE: REMOVED FLAG to fix "Unsupported Command-Line Flag"
+            // We now hide automation using the Page Script above manually.
+            // args.push('--disable-blink-features=AutomationControlled');
+            console.log('[BrowserManager] Launch Args (Manual + Pure Puppeteer + No Flag):', args);
+
+            const browser = await puppeteer.launch({
+                executablePath,
+                headless: false,
+                defaultViewport: null,
+                userDataDir,
+                args: args, // Use direct args
+                ignoreHTTPSErrors: true,
+                ignoreDefaultArgs: true, // Keep this true (Clean Slate)
+                pipe: true // CRITICAL: Required for packaged Electron apps to communicate with Chrome
             });
 
-            // Store browser instance in map
-            BrowserManager.activeBrowsers.set(account.id, browser);
-            console.log(`[BrowserManager] ✓ Browser instance stored for account: ${account.name} `);
+            // ---------------------------------------------------------
+            // EVASION INJECTION (Critical Step)
+            // ---------------------------------------------------------
+            const pages = await browser.pages();
+            const evasionPage = pages.length > 0 ? pages[0] : await browser.newPage();
 
-            return browser;
-        } catch (err) {
-            console.error('[BrowserManager] Fatal Launch Error:', err);
-            throw err;
+            // HYBRID SYNC: Inject All Storage Data (Cookies + LocalStorage + SessionStorage)
+            if (storageData) {
+                // Inject Cookies
+                if (storageData.cookies?.length > 0) {
+                    console.log(`[Sync] ✓ Downloaded ${storageData.cookies.length} cookies from DB`);
+                    console.log(`[Sync] Cookie domains:`, storageData.cookies.map(c => c.domain).join(', '));
+                    try {
+                        await evasionPage.setCookie(...storageData.cookies);
+                        console.log(`[Sync] ✓ Cookies injected successfully`);
+                    } catch (err) {
+                        console.error(`[Sync] ✗ Cookie injection failed:`, err.message);
+                    }
+                }
+
+                // Inject LocalStorage
+                if (storageData.localStorage && Object.keys(storageData.localStorage).length > 0) {
+                    try {
+                        await evasionPage.evaluateOnNewDocument((data) => {
+                            for (const [key, value] of Object.entries(data)) {
+                                localStorage.setItem(key, value);
+                            }
+                        }, storageData.localStorage);
+                        console.log(`[Sync] ✓ Injected ${Object.keys(storageData.localStorage).length} localStorage items`);
+                    } catch (err) {
+                        console.error('[Sync] ✗ LocalStorage injection failed:', err.message);
+                    }
+                }
+
+                // Inject SessionStorage
+                if (storageData.sessionStorage && Object.keys(storageData.sessionStorage).length > 0) {
+                    try {
+                        await evasionPage.evaluateOnNewDocument((data) => {
+                            for (const [key, value] of Object.entries(data)) {
+                                sessionStorage.setItem(key, value);
+                            }
+                        }, storageData.sessionStorage);
+                        console.log(`[Sync] ✓ Injected ${Object.keys(storageData.sessionStorage).length} sessionStorage items`);
+                    } catch (err) {
+                        console.error('[Sync] ✗ SessionStorage injection failed:', err.message);
+                    }
+                }
+            } else {
+                console.log('[Sync] ⚠ No storage data found in DB for this account');
+            }
+
+            const page = evasionPage; // Restore 'page' alias for downstream compatibility
+
+            // 1. Remove "cdc_" property (Puppeteer marker)
+            // 2. Inject advanced evasion scripts before ANY script loads
+            // 1. Inject advanced evasion scripts before ANY script loads
+            // (CDC removal is included in PuppeteerEvasion)
+
+            // IPHEY FIX: PuppeteerEvasion DISABLED
+            // The custom evasion scripts in PuppeteerEvasion.js break IPHey's fingerprint detection
+            // Stealth Plugin alone is sufficient and IPHey-compatible
+            // const evasionScript = PuppeteerEvasion.getAllEvasionScripts(account.fingerprint);
+            // await evasionPage.evaluateOnNewDocument(evasionScript);
+            console.log('[Evasion] Manual Mode (Stealth Plugin Disabled)');
+
+            // PROXY PROTECTION: Prevent WebRTC IP leak when using proxy
+            if (account.proxy && account.proxy.host) {
+                console.log('[Proxy] Injecting WebRTC leak protection...');
+                await evasionPage.evaluateOnNewDocument(() => {
+                    // Block WebRTC from exposing local IP addresses
+                    const originalGetUserMedia = navigator.mediaDevices.getUserMedia;
+                    navigator.mediaDevices.getUserMedia = function () {
+                        return Promise.reject(new DOMException('Permission denied', 'NotAllowedError'));
+                    };
+
+                    // Override RTCPeerConnection to prevent IP leak
+                    const originalRTCPeerConnection = window.RTCPeerConnection;
+                    window.RTCPeerConnection = function (config = {}) {
+                        // Force relay-only mode (no local IP exposure)
+                        if (!config.iceServers) config.iceServers = [];
+                        config.iceTransportPolicy = 'relay';
+                        return new originalRTCPeerConnection(config);
+                    };
+                    window.RTCPeerConnection.prototype = originalRTCPeerConnection.prototype;
+
+                    // Block mDNS candidate gathering
+                    const originalCreateOffer = RTCPeerConnection.prototype.createOffer;
+                    RTCPeerConnection.prototype.createOffer = function (options) {
+                        if (!options) options = {};
+                        options.offerToReceiveAudio = false;
+                        options.offerToReceiveVideo = false;
+                        return originalCreateOffer.apply(this, arguments);
+                    };
+                });
+            }
+
+
+
+
+            browser.on('disconnected', async () => {
+                console.log(`[BrowserManager] Browser closed. Cleaning up...`);
+                BrowserManager.activeBrowsers.delete(account.id);
+
+                if (anonymizedProxyUrl) {
+                    try {
+                        await ProxyChain.closeAnonymizedProxy(anonymizedProxyUrl, true);
+                        console.log('[Proxy] Bridge closed.');
+                    } catch (e) { console.error('[Proxy] Close error:', e); }
+                }
+                if (proxyExtensionPath) {
+                    try { await fs.remove(proxyExtensionPath); } catch (e) { }
+                }
+
+                // HYBRID SYNC: Export Cookies before upload
+                console.log('[Sync] Starting cookie export...');
+                try {
+                    const pages = await browser.pages();
+                    console.log(`[Sync] Found ${pages.length} pages`);
+                    if (pages.length > 0) {
+                        const cookies = await pages[0].cookies();
+                        console.log(`[Sync] ✓ Extracted ${cookies.length} cookies from browser`);
+                        console.log(`[Sync] Cookie domains:`, cookies.map(c => c.domain).join(', '));
+                        await SyncManager.uploadCookies(account.id, cookies);
+                    } else {
+                        console.warn('[Sync] ⚠ No pages available for cookie extraction');
+                    }
+                } catch (e) {
+                    console.error('[Sync] ✗ Failed to export cookies:', e.message);
+                }
+
+                await SyncManager.uploadSession(account.id);
+                console.log(`[Sync] Finished upload for ${account.name}`);
+            });
+
+            // Continue with setup
+            try {
+                console.log('[BrowserManager] Setup Continuing (EvasionPage)...');
+                BrowserManager.lastPage = evasionPage; // Track for Element Picker
+
+                // ===================================================================
+                // MANUAL STEALTH INJECTION (Replaces Stealth Plugin)
+                // ===================================================================
+                // ===================================================================
+                // MANUAL STEALTH INJECTION (Level 3 - Robust)
+                // ===================================================================
+                await evasionPage.evaluateOnNewDocument((runInfo) => {
+                    // 1. Hide navigator.webdriver (Standard)
+                    Object.defineProperty(navigator, 'webdriver', { get: () => false });
+
+                    // 2. Mock Chrome Runtime (Critical for IPHey)
+                    if (!window.chrome) window.chrome = {};
+                    if (!window.chrome.runtime) window.chrome.runtime = {};
+
+                    // 3. Mock Plugins & MimeTypes (Linked)
+                    const mockPlugins = [
+                        { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                        { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+                        { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
+                    ];
+
+                    Object.defineProperty(navigator, 'plugins', {
+                        get: () => {
+                            const p = [...mockPlugins];
+                            p.item = (i) => p[i];
+                            p.namedItem = (name) => p.find(x => x.name === name);
+                            p.refresh = () => { };
+                            return p;
+                        }
+                    });
+
+                    Object.defineProperty(navigator, 'mimeTypes', {
+                        get: () => {
+                            const m = [
+                                { type: 'application/pdf', suffixes: 'pdf', description: '', enabledPlugin: mockPlugins[0] },
+                                { type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: mockPlugins[1] }
+                            ];
+                            m.item = (i) => m[i];
+                            m.namedItem = (type) => m.find(x => x.type === type);
+                            return m;
+                        }
+                    });
+
+                    // 4. Mock Languages
+                    Object.defineProperty(navigator, 'languages', {
+                        get: () => ['en-US', 'en'],
+                    });
+
+                    // 5. Polyfill Notification (Fixes ReferenceError)
+                    if (!window.Notification) {
+                        window.Notification = {
+                            permission: 'default',
+                            requestPermission: () => Promise.resolve('default')
+                        };
+                    }
+
+                    // 6. Pass Permissions Check (Safe Fallback)
+                    if (window.navigator.permissions) {
+                        const originalQuery = window.navigator.permissions.query;
+                        window.navigator.permissions.query = (parameters) => {
+                            if (parameters.name === 'notifications') {
+                                return Promise.resolve({ state: window.Notification.permission });
+                            }
+                            return originalQuery(parameters);
+                        };
+                    }
+
+                    // 7. UA Client Hints (CRITICAL for Google Login)
+                    if (navigator.userAgentData) {
+                        const majorVersion = "131";
+                        const fullVersion = "131.0.0.0";
+                        const brands = [
+                            { brand: "Chromium", version: majorVersion },
+                            { brand: "Google Chrome", version: majorVersion },
+                            { brand: "Not=A?Brand", version: "24" }
+                        ];
+
+                        Object.defineProperty(navigator, 'userAgentData', {
+                            get: () => ({
+                                brands: brands,
+                                mobile: false,
+                                platform: "Windows",
+                                getHighEntropyValues: (hints) => Promise.resolve({
+                                    architecture: "x86",
+                                    bitness: "64",
+                                    brands: brands,
+                                    mobile: false,
+                                    model: "",
+                                    platform: "Windows",
+                                    platformVersion: "15.0.0",
+                                    uaFullVersion: fullVersion
+                                }),
+                                toJSON: () => ({ brands, mobile: false, platform: "Windows" })
+                            })
+                        });
+                    }
+
+                    // 7. WebGL Vendor/Renderer (REMOVED to avoid "Masking Detected")
+                    // We will rely on the real GPU (RTX 3060) which is better than a detected mock.
+                    /*
+                    const mockWebGL = (context) => {
+                        try {
+                            if (!context) return;
+                            const getParameter = context.prototype.getParameter;
+                            context.prototype.getParameter = function (parameter) {
+                                try {
+                                    // 37445 = UNMASKED_VENDOR_WEBGL
+                                    // 37446 = UNMASKED_RENDERER_WEBGL
+                                    if (parameter === 37445) return 'Google Inc. (NVIDIA)';
+                                    if (parameter === 37446) return 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)';
+                                    return getParameter.apply(this, [parameter]);
+                                } catch (err) {
+                                    return null; // Suppress INVALID_ENUM errors
+                                }
+                            };
+                        } catch (e) { }
+                    };
+    
+                    mockWebGL(window.WebGLRenderingContext);
+                    mockWebGL(window.WebGL2RenderingContext);
+                    */
+
+                    // 8. Hardware Concurrency & Memory (REMOVED to avoid "Masking Detected")
+                    // Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4 });
+                    // Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+                    // Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+
+                }, { /* Optional args */ });
+                console.log('[Evasion] ✓ Manual Stealth Scripts Injected (Level 5 - Minimal/Native Hardware)');
+
+                // Setup Supervisor (2FA & Click/Type listener)
+                // RESTORED: Now that we have manual stealth, we can try restoring this.
+                // If it hangs again, we will know for sure.
+                await this.startSupervisor(evasionPage, account);
+
+                console.log('[Evasion] ✓ Supervisor injected');
+            } catch (err) {
+                console.error('[BrowserManager] Injection error:', err);
+            }
+
+
+
+
+            // ===================================================================
+            // RESTORED CLIENT SCRIPTS (Optimized)
+            // ===================================================================
+
+            // CLIENT-SIDE SCRIPT (Injected) - Handles Username, Password, Logs
+            // ----------------------------------------------------------------
+            // Expose for In-Page script (kept for redundancy/other fields)
+            await page.exposeFunction('getTOTP', () => {
+                if (account.auth.twoFactorSecret) {
+                    try { return authenticator.generate(account.auth.twoFactorSecret); } catch (e) { return null; }
+                }
+                return null;
+            });
+
+            await page.exposeFunction('has2FASecret', () => !!account.auth.twoFactorSecret);
+
+            // ----------------------------------------------------------------
+            // CLIENT-SIDE SCRIPT (Injected) - Handles Username, Password, Logs
+            // ----------------------------------------------------------------
+            try {
+                await page.evaluateOnNewDocument((auth) => {
+                    // AGGRESSIVE PASSWORD MASKING ENFORCER
+                    setInterval(() => {
+                        // 1. Force Input Type = Password
+                        const passInputs = document.querySelectorAll('input[type="password"], div[data-cy="signin-password-input"] input');
+                        passInputs.forEach(el => {
+                            if (el.type !== 'password') {
+                                el.type = 'password';
+                                console.log('[Enforcer] Reverted password field to secure type.');
+                            }
+                        });
+
+                        // 2. Kill Reveal Buttons (Tazapay specific & Generic)
+                        const targets = [
+                            'div[data-cy="signin-password-input"] svg',
+                            'div[data-cy="signin-password-input"] button',
+                            'div[data-cy="signin-password-input"] .ant-input-suffix', // Ant Design
+                            '.MuiInputAdornment-positionEnd', // Material UI
+                            // 'input::-ms-reveal' // Pseudo-elements can't be removed by JS, handled by CSS or just ignored as we enforce type
+                        ];
+
+                        targets.forEach(selector => {
+                            document.querySelectorAll(selector).forEach(el => {
+                                el.remove(); // DELETE FROM DOM
+                            });
+                        });
+                    }, 100);
+
+                    window.__loginState = { lastAction: 0 };
+                    const PLATFORMS = {
+                        'tazapay': {
+                            user: ['div[data-cy="signin-email-data"] input', 'input[placeholder="Enter email address"]'],
+                            pass: ['div[data-cy="signin-password-input"] input', 'input[type="password"]'],
+                            remember: ['input[name="saveSession"]'],
+                            next: ['button[data-cy="signin-button"]'],
+                            // Note: 2FA is now handled by Node-side Supervisor for reliability
+                            twoFactor: ['input[data-cy^="authenticator-authenticate-otp-field-otp-input-"]']
+                        }
+                    };
+
+                    function isVisible(el) {
+                        if (!el) return false;
+                        const style = window.getComputedStyle(el);
+                        return style.display !== 'none' && style.visibility !== 'hidden' && !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+                    }
+
+                    function triggerEvents(el, val) {
+                        if (!el) return;
+                        el.focus();
+                        el.value = val;
+                        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+                        if (nativeInputValueSetter) nativeInputValueSetter.call(el, val);
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+
+                    // Auto-login logic removed as per user request to focus on Workflow Automations.
+                    // The previous setInterval loop (lines 301-343) has been deleted.
+                }, account.auth);
+
+                // ----------------------------------------------------------------
+                // NODE-SIDE SUPERVISOR (Specific for complex interactions like 2FA)
+                // ----------------------------------------------------------------
+                BrowserManager.startSupervisor(page, account);
+
+                // ===================================================================
+                // END RESTORE BLOCK
+                // ===================================================================
+                // ===================================================================
+                // END IPHEY DEBUG BLOCK
+                // ===================================================================
+
+
+                if (account.loginUrl) {
+                    console.log(`[Browser] Navigating to ${account.loginUrl}`);
+                    try {
+                        await page.goto(account.loginUrl, { waitUntil: 'load', timeout: 60000 });
+                    } catch (e) { console.warn('Nav timeout, continuing...'); }
+
+                    // Automation Mode Check
+                    // Valid modes: 'auto' (default), 'manual'
+                    // If mode arg is passed (e.g. from Open button), it overrides DB config
+                    const automationMode = (mode || account.automation_mode || 'auto').toLowerCase();
+                    console.log(`[BrowserManager] Automation Mode: ${automationMode}`);
+
+                    if (automationMode === 'auto' && account.workflow_id) {
+                        await BrowserManager.executeWorkflow(browser, page, account.workflow_id);
+                        // If workflow completes, close browser?
+                        // Usually executeWorkflow closes it, or we close it here.
+                        // For now, let's assume we want to close after auto.
+                        try { await browser.close(); } catch (e) { }
+                    } else {
+                        console.log('[BrowserManager] Manual mode or no workflow. Keeping browser open.');
+                    }
+
+
+
+                    // IP Check
+                    try {
+                        const ip = await page.evaluate(() => fetch('https://api.ipify.org?format=json').then(r => r.json()).then(d => d.ip));
+                        console.log(`[Proxy-Check] Current Exit IP: ${ip}`);
+                    } catch (e) { }
+                }
+
+                // ===================================================================
+                // HYBRID SYNC: Periodic Storage Backup (Every 30s)
+                // Moved outside loginUrl block to ensure it ALWAYS runs
+                // =================================================================== 
+                const cookieSyncInterval = setInterval(async () => {
+                    try {
+                        if (browser.isConnected()) {
+                            const allPages = await browser.pages();
+                            if (allPages.length > 0) {
+                                const page = allPages[0];
+
+                                // Extract all storage data
+                                const storageInfo = await page.evaluate(() => {
+                                    const localStorageData = {};
+                                    for (let i = 0; i < localStorage.length; i++) {
+                                        const key = localStorage.key(i);
+                                        localStorageData[key] = localStorage.getItem(key);
+                                    }
+
+                                    const sessionStorageData = {};
+                                    for (let i = 0; i < sessionStorage.length; i++) {
+                                        const key = sessionStorage.key(i);
+                                        sessionStorageData[key] = sessionStorage.getItem(key);
+                                    }
+
+                                    return {
+                                        localStorage: localStorageData,
+                                        sessionStorage: sessionStorageData
+                                    };
+                                });
+
+                                // Get cookies
+                                const cookies = await page.cookies();
+
+                                // Upload everything
+                                await SyncManager.uploadStorage(account.id, {
+                                    cookies,
+                                    localStorage: storageInfo.localStorage,
+                                    sessionStorage: storageInfo.sessionStorage
+                                });
+
+                                console.log(`[Sync] ✓ Periodic backup: ${cookies.length} cookies, ${Object.keys(storageInfo.localStorage).length} localStorage, ${Object.keys(storageInfo.sessionStorage).length} sessionStorage`);
+                            }
+                        } else {
+                            clearInterval(cookieSyncInterval);
+                        }
+                    } catch (e) {
+                        console.error('[Sync] Periodic backup error:', e.message);
+                    }
+                }, 30000); // Every 30 seconds
+
+                // Also sync on navigation completion
+                page.on('load', async () => {
+                    try {
+                        // Extract all storage data
+                        const storageInfo = await page.evaluate(() => {
+                            const localStorageData = {};
+                            for (let i = 0; i < localStorage.length; i++) {
+                                const key = localStorage.key(i);
+                                localStorageData[key] = localStorage.getItem(key);
+                            }
+
+                            const sessionStorageData = {};
+                            for (let i = 0; i < sessionStorage.length; i++) {
+                                const key = sessionStorage.key(i);
+                                sessionStorageData[key] = sessionStorage.getItem(key);
+                            }
+
+                            return {
+                                localStorage: localStorageData,
+                                sessionStorage: sessionStorageData
+                            };
+                        });
+
+                        const cookies = await page.cookies();
+
+                        await SyncManager.uploadStorage(account.id, {
+                            cookies,
+                            localStorage: storageInfo.localStorage,
+                            sessionStorage: storageInfo.sessionStorage
+                        });
+
+                        console.log(`[Sync] ✓ Page load backup: ${cookies.length} cookies, ${Object.keys(storageInfo.localStorage).length} localStorage, ${Object.keys(storageInfo.sessionStorage).length} sessionStorage`);
+                    } catch (e) {
+                        console.error('[Sync] Page load sync error:', e.message);
+                    }
+                });
+
+                // Store browser instance in map
+                BrowserManager.activeBrowsers.set(account.id, browser);
+                console.log(`[BrowserManager] ✓ Browser instance stored for account: ${account.name} `);
+
+                return browser;
+            } catch (err) {
+                console.error('[BrowserManager] Fatal Launch Error:', err);
+                throw err;
+            }
         }
-    }
 
     static startElementPicker(page) {
         if (!page || page.isClosed()) throw new Error('Browser page is not available.');
