@@ -144,6 +144,10 @@ class BrowserManager {
             'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
             'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
             'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+            '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+            '/usr/bin/google-chrome',
+            '/usr/bin/chromium-browser',
             process.env.CHROME_PATH
         ];
 
@@ -192,7 +196,7 @@ class BrowserManager {
         const args = [
             '--no-first-run',
             '--no-default-browser-check',
-            // '--disable-blink-features=AutomationControlled', // DUPLICATION FIX: Stealth Plugin adds this automatically
+            '--disable-blink-features=AutomationControlled', // CRITICAL: Re-enabled for Google Login (Stealth Plugin is NOT active)
             '--disable-infobars',
             '--disable-save-password-bubble',
             '--password-store=basic',
@@ -424,6 +428,36 @@ class BrowserManager {
                         }
                         return originalQuery(parameters);
                     };
+                }
+
+                // 7. UA Client Hints (CRITICAL for Google Login)
+                if (navigator.userAgentData) {
+                    const majorVersion = "131";
+                    const fullVersion = "131.0.0.0";
+                    const brands = [
+                        { brand: "Chromium", version: majorVersion },
+                        { brand: "Google Chrome", version: majorVersion },
+                        { brand: "Not=A?Brand", version: "24" }
+                    ];
+
+                    Object.defineProperty(navigator, 'userAgentData', {
+                        get: () => ({
+                            brands: brands,
+                            mobile: false,
+                            platform: "Windows",
+                            getHighEntropyValues: (hints) => Promise.resolve({
+                                architecture: "x86",
+                                bitness: "64",
+                                brands: brands,
+                                mobile: false,
+                                model: "",
+                                platform: "Windows",
+                                platformVersion: "15.0.0",
+                                uaFullVersion: fullVersion
+                            }),
+                            toJSON: () => ({ brands, mobile: false, platform: "Windows" })
+                        })
+                    });
                 }
 
                 // 7. WebGL Vendor/Renderer (REMOVED to avoid "Masking Detected")

@@ -1,5 +1,17 @@
 # Release History
 
+## [2.1.1] - 2026-01-19
+**"The Cross-Platform Stealth Update"**
+
+### Features
+- **macOS Support:** Added official support for macOS Chrome and Edge paths in `BrowserManager`. Now verified for Mac environments.
+- **Stealth Engine v2.0:** Consolidated stealth logic into `stealth-master-v2.md` ("The Golden Formula").
+
+### Fixes
+- **Google Login:** Re-enabled `AutomationControlled` flag and added `UA-CH` injection to fix Google Login detection (Critical Patch).
+
+
+
 ## [2.1.0] - 2026-01-19
 **"Admin Empowerment Update"**
 
