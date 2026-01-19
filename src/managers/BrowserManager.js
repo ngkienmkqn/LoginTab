@@ -363,6 +363,18 @@ class BrowserManager {
             if (proxyExtensionPath) {
                 try { await fs.remove(proxyExtensionPath); } catch (e) { }
             }
+
+            // HYBRID SYNC: Export Cookies before upload
+            try {
+                const pages = await browser.pages();
+                if (pages.length > 0) {
+                    const cookies = await pages[0].cookies();
+                    await SyncManager.uploadCookies(account.id, cookies);
+                }
+            } catch (e) {
+                console.warn('[Sync] Failed to export cookies:', e.message);
+            }
+
             await SyncManager.uploadSession(account.id);
             console.log(`[Sync] Finished upload for ${account.name}`);
         });
