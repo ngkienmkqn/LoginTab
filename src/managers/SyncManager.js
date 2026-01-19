@@ -90,6 +90,78 @@ class SyncManager {
             return false;
         }
     }
+
+    /**
+     * Upload complete storage (cookies + localStorage + sessionStorage) to MySQL
+     * v2.4.0 - Complete portable session sync
+     */
+    async uploadStorage(accountId, storageData) {
+        try {
+            const { cookies = [], localStorage = {}, sessionStorage = {} } = storageData;
+
+            const cookiesJson = JSON.stringify(cookies);
+            const localStorageJson = JSON.stringify(localStorage);
+            const sessionStorageJson = JSON.stringify(sessionStorage);
+
+            await pool.query(
+                `INSERT INTO account_cookies (account_id, cookies, local_storage, session_storage, updated_at)
+                 VALUES (?, ?, ?, ?, NOW())
+                 ON DUPLICATE KEY UPDATE 
+                    cookies = VALUES(cookies),
+                    local_storage = VALUES(local_storage),
+                    session_storage = VALUES(session_storage),
+                    updated_at = NOW()`,
+                [accountId, cookiesJson, localStorageJson, sessionStorageJson]
+            );
+
+            console.log(`[Sync] Storage uploaded for ${accountId} (${cookies.length} cookies, ${Object.keys(localStorage).length} localStorage, ${Object.keys(sessionStorage).length} sessionStorage)`);
+            return true;
+        } catch (error) {
+            console.error(`[Sync] Storage upload failed for ${accountId}:`, error);
+            return false;
+        }
+    }
+
+    /**
+     * Download complete storage (cookies + localStorage + sessionStorage) from MySQL
+     * v2.4.0 - Complete portable session sync
+     */
+    async downloadStorage(accountId) {
+        try {
+            const [rows] = await pool.query(
+                'SELECT cookies, local_storage, session_storage FROM account_cookies WHERE account_id = ?',
+                [accountId]
+            );
+
+            if (rows.length === 0) {
+                console.log(`[Sync] No storage data found in DB for ${accountId}`);
+                return { cookies: [], localStorage: {}, sessionStorage: {} };
+            }
+
+            const row = rows[0];
+            const cookies = row.cookies ? JSON.parse(row.cookies) : [];
+            const localStorage = row.local_storage ? JSON.parse(row.local_storage) : {};
+            const sessionStorage = row.session_storage ? JSON.parse(row.session_storage) : {};
+
+            console.log(`[Sync] ✓ Downloaded storage for ${accountId}: ${cookies.length} cookies, ${Object.keys(localStorage).length} localStorage, ${Object.keys(sessionStorage).length} sessionStorage`);
+
+            return { cookies, localStorage, sessionStorage };
+        } catch (error) {
+            console.error(`[Sync] Storage download failed for ${accountId}:`, error);
+            return { cookies: [], localStorage: {}, sessionStorage: {} };
+        }
+    }
+
+    // Legacy wrapper for backward compatibility
+    async uploadCookies(accountId, cookies) {
+        return this.uploadStorage(accountId, { cookies, localStorage: {}, sessionStorage: {} });
+    }
+
+    // Legacy wrapper for backward compatibility
+    async downloadCookies(accountId) {
+        const { cookies } = await this.downloadStorage(accountId);
+        return cookies;
+    }
 }
 
 module.exports = new SyncManager();

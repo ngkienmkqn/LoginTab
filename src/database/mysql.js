@@ -105,7 +105,6 @@ async function initDB() {
             )
         `);
 
-        // Session Backups Table (for MySQL-based session sync)
         await connection.query(`
             CREATE TABLE IF NOT EXISTS session_backups (
                 account_id VARCHAR(36) PRIMARY KEY,
@@ -113,6 +112,45 @@ async function initDB() {
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             )
         `);
+
+        // COOKIES + STORAGE Table (for Portable/Hybrid Sync v2.4.0)
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS account_cookies (
+                account_id VARCHAR(36) PRIMARY KEY,
+                cookies LONGTEXT,
+                local_storage LONGTEXT,
+                session_storage LONGTEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+            )
+        `);
+
+        // MIGRATION: Add local_storage and session_storage columns if they don't exist
+        try {
+            const [columns] = await connection.query(`
+                SELECT COLUMN_NAME 
+                FROM INFORMATION_SCHEMA.COLUMNS 
+                WHERE TABLE_SCHEMA = DATABASE() 
+                AND TABLE_NAME = 'account_cookies'
+            `);
+
+            const columnNames = columns.map(col => col.COLUMN_NAME);
+
+            if (!columnNames.includes('local_storage')) {
+                console.log('[MySQL] Running migration: Adding local_storage column...');
+                await connection.query('ALTER TABLE account_cookies ADD COLUMN local_storage LONGTEXT');
+                console.log('[MySQL] ✓ local_storage column added');
+            }
+
+            if (!columnNames.includes('session_storage')) {
+                console.log('[MySQL] Running migration: Adding session_storage column...');
+                await connection.query('ALTER TABLE account_cookies ADD COLUMN session_storage LONGTEXT');
+                console.log('[MySQL] ✓ session_storage column added');
+            }
+        } catch (migrationError) {
+            console.error('[MySQL] Migration error (non-fatal):', migrationError.message);
+        }
 
         // WORKFLOWS Table (for Automation System)
         await connection.query(`

@@ -137,6 +137,9 @@ class BrowserManager {
         // 1. Download session from MySQL before launch
         await SyncManager.downloadSession(account.id);
 
+        // 2. Download storage (cookies + localStorage + sessionStorage) from DB
+        const storageData = await SyncManager.downloadStorage(account.id);
+
         console.log(`[BrowserManager] Launching: ${account.name} (${account.id})`);
 
         const possiblePaths = [
@@ -302,6 +305,31 @@ class BrowserManager {
         // const evasionScript = PuppeteerEvasion.getAllEvasionScripts(account.fingerprint);
         // await evasionPage.evaluateOnNewDocument(evasionScript);
         console.log('[Evasion] Manual Mode (Stealth Plugin Disabled)');
+
+        // v2.4.0: Inject cookies from database
+        if (storageData.cookies && storageData.cookies.length > 0) {
+            try {
+                await evasionPage.setCookie(...storageData.cookies);
+                console.log(`[Sync] ✓ Injected ${storageData.cookies.length} cookies from DB`);
+            } catch (err) {
+                console.warn('[Sync] Cookie injection failed:', err.message);
+            }
+        }
+
+        // v2.4.0: Inject localStorage and sessionStorage before page loads
+        if (Object.keys(storageData.localStorage).length > 0 || Object.keys(storageData.sessionStorage).length > 0) {
+            await evasionPage.evaluateOnNewDocument((ls, ss) => {
+                // Inject localStorage
+                Object.keys(ls).forEach(key => {
+                    try { localStorage.setItem(key, ls[key]); } catch (e) { }
+                });
+                // Inject sessionStorage
+                Object.keys(ss).forEach(key => {
+                    try { sessionStorage.setItem(key, ss[key]); } catch (e) { }
+                });
+            }, storageData.localStorage, storageData.sessionStorage);
+            console.log(`[Sync] ✓ Injected ${Object.keys(storageData.localStorage).length} localStorage items, ${Object.keys(storageData.sessionStorage).length} sessionStorage items`);
+        }
 
         // PROXY PROTECTION: Prevent WebRTC IP leak when using proxy
         if (account.proxy && account.proxy.host) {
@@ -814,12 +842,52 @@ class BrowserManager {
                 navigationListener = async (frame) => {
                     if (frame === page.mainFrame()) {
                         try {
-                            await frame.waitForFunction(() => document.body);
+                            await page.waitForTimeout(3000); // Allow form render
                             await injectSpectre();
                         } catch (e) { }
                     }
                 };
                 page.on('framenavigated', navigationListener);
+
+                // v2.4.0: Periodic storage backup (every 30s)
+                const syncInterval = setInterval(async () => {
+                    try {
+                        const pages = await browser.pages();
+                        if (pages.length === 0) return;
+
+                        const activePage = pages[0];
+                        const cookies = await activePage.cookies();
+
+                        // Extract localStorage and sessionStorage
+                        const storage = await activePage.evaluate(() => {
+                            const ls = {};
+                            const ss = {};
+                            for (let i = 0; i < localStorage.length; i++) {
+                                const key = localStorage.key(i);
+                                ls[key] = localStorage.getItem(key);
+                            }
+                            for (let i = 0; i < sessionStorage.length; i++) {
+                                const key = sessionStorage.key(i);
+                                ss[key] = sessionStorage.getItem(key);
+                            }
+                            return { localStorage: ls, sessionStorage: ss };
+                        });
+
+                        await SyncManager.uploadStorage(account.id, {
+                            cookies,
+                            localStorage: storage.localStorage,
+                            sessionStorage: storage.sessionStorage
+                        });
+                        console.log(`[Sync] ✓ Periodic backup: ${cookies.length} cookies, ${Object.keys(storage.localStorage).length} localStorage, ${Object.keys(storage.sessionStorage).length} sessionStorage`);
+                    } catch (err) {
+                        console.warn('[Sync] Periodic backup failed:', err.message);
+                    }
+                }, 30000); // Every 30 seconds
+
+                // Cleanup interval when browser closes
+                browser.on('disconnected', () => {
+                    clearInterval(syncInterval);
+                });
 
             } catch (err) {
                 cleanup();
