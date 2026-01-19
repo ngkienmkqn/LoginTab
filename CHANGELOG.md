@@ -1,5 +1,31 @@
 # Release History
 
+## [2.2.2] - 2026-01-19
+**"Cookie Sync Actually Works Now"**
+
+### Critical Fixes
+- **Cookie Export Timing Issue:** Fixed fatal bug where cookies couldn't be extracted on browser close because `browser.pages()` returned empty array after disconnect event.
+- **New Strategy - Periodic Sync:** Implemented automatic cookie backup every 30 seconds while browser is active.
+- **Page Load Sync:** Added cookie sync trigger on every page navigation completion.
+
+### Technical Details
+**Problem Identified:**
+- v2.2.0-2.2.1 tried to export cookies in `browser.on('disconnected')` handler
+- At that point, browser was already disconnected → `pages()` returned `[]`
+- Result: `[Sync] ⚠ No pages available for cookie extraction`
+
+**Solution Implemented:**
+1. **Periodic Backup:** `setInterval` every 30s checks if browser is connected and exports cookies
+2. **Navigation Sync:** `page.on('load')` event triggers immediate cookie export after page loads
+3. **Graceful Cleanup:** Interval automatically clears when browser disconnects
+
+**User Impact:**
+- Sessions now persist correctly across machine switches
+- No user action required - cookies auto-sync in background
+- Visible in logs: `[Sync] ✓ Periodic cookie backup (X cookies)` and `[Sync] ✓ Cookies synced on page load (X cookies)`
+
+
+
 ## [2.2.1] - 2026-01-19
 **"Hotfix: SyncManager Syntax Error"**
 
