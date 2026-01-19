@@ -205,6 +205,7 @@ class BrowserManager {
             '--no-first-run',
             '--no-default-browser-check',
             '--disable-blink-features=AutomationControlled', // CRITICAL: Re-enabled for Google Login (Stealth Plugin is NOT active)
+            '--exclude-switches=enable-automation', // Hide automation infobar
             '--disable-infobars',
             '--disable-save-password-bubble',
             '--password-store=basic',
@@ -291,7 +292,7 @@ class BrowserManager {
             userDataDir,
             args: args,
             ignoreHTTPSErrors: true,
-            ignoreDefaultArgs: ['--enable-automation'], // Hide "Chrome is being controlled" banner
+            ignoreDefaultArgs: true, // Full control over args
             pipe: true // CRITICAL: Required for packaged Electron apps to communicate with Chrome
         });
 

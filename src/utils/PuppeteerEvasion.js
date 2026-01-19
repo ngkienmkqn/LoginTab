@@ -203,45 +203,40 @@ Object.defineProperty(navigator, 'mimeTypes', {
         return `
             // Font masking disabled to allow natural system fonts
             if (window.queryLocalFonts) {
-                // delete window.queryLocalFonts; 
-            }
-        `;
-    }
-
-    /**
-     * 4. Fix WebGL - DYNAMIC from Fingerprint
-     */
+                // ====================================================================
+    // WebGL Spoofing (DISABLED FOR NATIVE HARDWARE STRATEGY)
+    // IPHey detects inconsistencies when we mock WebGL but real GPU timing leaks through
+    // SOLUTION: Use 100% REAL hardware - no mocking
+    // ====================================================================
     static fixWebGL(fp) {
+        // NATIVE STRATEGY: Return empty string to skip ALL WebGL mocking
+        // Real GPU (RTX 3060, etc.) will pass through naturally
+        return '';
+        
+        /* DISABLED - causes "masking detected" on IPHey
         if (!fp.webglVendor || !fp.webglRenderer) return ''; // Real Mode
 
         const vendor = fp.webglVendor;
         const renderer = fp.webglRenderer;
 
         return `
-// WebGL Fix (Dynamic)
-const getParameter = WebGLRenderingContext.prototype.getParameter;
-WebGLRenderingContext.prototype.getParameter = function(parameter) {
-    if (parameter === 37445) {
-        return '${vendor}';
-    }
-    if (parameter === 37446) {
-        return '${renderer}';
-    }
-    return getParameter.call(this, parameter);
-};
+        const getParameter = WebGLRenderingContext.prototype.getParameter;
+        WebGLRenderingContext.prototype.getParameter = function (parameter) {
+            if (parameter === 37445) return '${vendor}';
+            if (parameter === 37446) return '${renderer}';
+            return getParameter.call(this, parameter);
+        };
 
-if (window.WebGL2RenderingContext) {
-    const getParameter2 = WebGL2RenderingContext.prototype.getParameter;
-    WebGL2RenderingContext.prototype.getParameter = function(parameter) {
-        if (parameter === 37445) {
-            return '${vendor}';
-        }
-        if (parameter === 37446) {
-            return '${renderer}';
-        }
-        return getParameter2.call(this, parameter);
-    };
-}
+        const getParameter2 = WebGL2RenderingContext.prototype.getParameter;
+        WebGL2RenderingContext.prototype.getParameter = function (parameter) {
+            if (parameter === 37445) return '${vendor}';
+            if (parameter === 37446) return '${renderer}';
+            return getParameter2.call(this, parameter);
+        };
+        `;
+        */
+    }
+            }
         `;
     }
 

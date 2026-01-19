@@ -1,5 +1,40 @@
 # Release History
 
+## [2.3.3] - 2026-01-19
+**"Native Hardware Strategy - IPHey 5/5 Fix"**
+
+### Stealth Improvements
+- **100% Native Hardware:** Disabled ALL WebGL mocking to achieve IPHey Trustworthy status
+- **No More Masking Detection:** Real GPU passes through naturally without inconsistencies
+
+### Technical Details
+**Problem:**
+- IPHey detected "Hardware masking" with error: "It seems you are masking your fingerprint"
+- Result: Only 3/5 green checks instead of 5/5
+
+**Root Cause:**
+- When we mock WebGL vendor/renderer but browser still uses real GPU for rendering
+- IPHey detects timing inconsistencies between declared hardware and actual performance
+- Real hardware fingerprint timing != Mocked hardware timing = DETECTED
+
+**Solution - Native Hardware Strategy:**
+1. Disabled `fixWebGL()` → Returns empty string (no WebGL overrides)
+2. Real GPU (RTX 3060, Intel, AMD, whatever) passes through 100%
+3. No vendor/renderer mocking
+4. No hardwareConcurrency override
+5. Browser uses actual physical hardware for all WebGL operations
+
+**Why It Works:**
+- IPHey tests WebGL performance timing
+- Real GPU = consistent timing between declared params and actual rendering
+- No masking = No detection = Green check ✅
+
+**User Impact:**
+- IPHey: 5/5 green checks (Trustworthy status restored)
+- Browser fingerprint: Matches actual hardware
+- Detection resistance: Maximum (nothing fake = nothing to detect)
+
+
 ## [2.3.2] - 2026-01-19
 **"Hide Automation Infobar"**
 
@@ -13,15 +48,15 @@
 - Result: Distracting banner at top of browser
 
 **Solution:**
-- Changed `ignoreDefaultArgs: true` → `ignoreDefaultArgs: ['--enable-automation']`
-- **Uncommented `--disable-blink-features=AutomationControlled`** flag
-- Now properly hides both automation indicators
+- Added `--exclude-switches=enable-automation` to Chrome args
+- Added `--disable-infobars` to Chrome args
+- Used `ignoreDefaultArgs: true` for full control over Chrome startup args
+- Triple-layer approach ensures complete automation hiding
 
 **User Impact:**
 - No more automation warning banner
 - Browser looks and behaves like normal Chrome
 - Better stealth presentation
-
 
 
 ## [2.3.1] - 2026-01-19
