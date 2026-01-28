@@ -1,0 +1,12 @@
+MAC OS FIX (Gatekeeper - "App is damaged/cannot be verified")
+============================================================
+
+If you see an error saying "Login Tab" is damaged or cannot be opened:
+
+1. Open 'Terminal' (Cmd + Space, type Terminal).
+2. Copy and paste the following command:
+
+   xattr -cr /Applications/Login\ Tab.app
+
+3. Press Enter.
+4. Open the App again. It should work now!

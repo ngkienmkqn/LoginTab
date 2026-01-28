@@ -1,6 +1,6 @@
 {
     "name": "login-tab",
-    "version": "2.5.0",
+    "version": "2.5.3",
     "description": "Login Tab - Advanced Account Manager with RBAC v2",
     "main": "main.js",
     "scripts": {
@@ -60,7 +60,8 @@
         "files": [
             "**/*",
             "!sessions/*",
-            "!dist/*"
+            "!dist/*",
+            "!resources/iron/*"
         ],
         "mac": {
             "target": [

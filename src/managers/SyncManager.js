@@ -52,6 +52,7 @@ class SyncManager {
             console.log(`[Sync] Session uploaded successfully for ${accountId}`);
         } catch (error) {
             console.error(`[Sync] Upload failed for ${accountId}:`, error);
+            throw error; // Rethrow to notify caller
         } finally {
             if (tempCopyPath && fs.existsSync(tempCopyPath)) {
                 await fs.remove(tempCopyPath).catch(() => { });
@@ -87,7 +88,7 @@ class SyncManager {
             return true;
         } catch (error) {
             console.error(`[Sync] Download failed for ${accountId}:`, error);
-            return false;
+            throw error; // Rethrow
         }
     }
 
@@ -117,6 +118,7 @@ class SyncManager {
             console.log(`[Sync] Storage uploaded for ${accountId} (${cookies.length} cookies, ${Object.keys(localStorage).length} localStorage, ${Object.keys(sessionStorage).length} sessionStorage)`);
         } catch (error) {
             console.error(`[Sync] Failed to upload storage for ${accountId}:`, error);
+            throw error; // Rethrow
         }
     }
 

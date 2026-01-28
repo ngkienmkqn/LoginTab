@@ -1,4 +1,20 @@
 // ==================== USER MANAGEMENT (RBAC v2) ====================
+const { ipcRenderer } = require('electron');
+
+let users = [];
+let editingUserId = null;
+let transferringUserId = null;
+let currentAssigningUserId = null;
+let currentAssigningUsername = null;
+
+async function loadUsers() {
+    try {
+        users = await ipcRenderer.invoke('get-users');
+        renderUserTable();
+    } catch (e) {
+        console.error('Failed to load users:', e);
+    }
+}
 
 // Render User Table (scoped by backend)
 async function renderUserTable() {
@@ -11,6 +27,8 @@ async function renderUserTable() {
         tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--text-muted)">No users found</td></tr>';
         return;
     }
+
+    const currentUser = window.currentUser || {};
 
     users.forEach(user => {
         const tr = document.createElement('tr');
@@ -38,7 +56,6 @@ async function renderUserTable() {
             if (manager) {
                 tdManaged.textContent = manager.username;
             } else {
-                // Manager not in scope (shouldn't happen with proper backend)
                 tdManaged.innerHTML = '<span style="color:#f59e0b">Unknown Admin</span>';
             }
         } else {
@@ -67,7 +84,6 @@ async function renderUserTable() {
                 tdAssignedAccounts.innerHTML = '<span style="color:var(--text-muted); font-style:italic">No assignments</span>';
             }
         } else {
-            // Show dash for admin viewing self or super admins
             tdAssignedAccounts.innerHTML = '<span style="color:var(--text-muted)">—</span>';
         }
         tr.appendChild(tdAssignedAccounts);
@@ -98,7 +114,7 @@ async function renderUserTable() {
         btnEdit.onclick = () => openEditUserModal(user);
         tdActions.appendChild(btnEdit);
 
-        // Delete button (cannot delete self or Super Admin)
+        // Delete button
         if (user.id !== currentUser.id && user.role !== 'super_admin') {
             const btnDel = document.createElement('button');
             btnDel.className = 'btn btn-danger';
@@ -116,23 +132,22 @@ async function renderUserTable() {
 
 // Open Add User Modal
 function openAddUserModal() {
+    const currentUser = window.currentUser || {};
     editingUserId = null;
     document.getElementById('userModalTitle').textContent = 'Add New User';
     document.getElementById('userUsername').value = '';
     document.getElementById('userPassword').value = '';
-    document.getElementById('userRole').value = 'staff'; // Default to staff
+    document.getElementById('userRole').value = 'staff';
 
     const roleSelect = document.getElementById('userRole');
     const assignGroup = document.getElementById('assignToAdminGroup');
     const assignSelect = document.getElementById('userAssignToAdmin');
 
     if (currentUser.role === 'admin') {
-        // Admin: Can only create Staff, no assignment option
         roleSelect.innerHTML = '<option value="staff">Staff</option>';
         roleSelect.disabled = true;
         if (assignGroup) assignGroup.style.display = 'none';
     } else {
-        // Super Admin: Can create any role
         roleSelect.innerHTML = `
             <option value="staff">Staff</option>
             <option value="admin">Admin</option>
@@ -140,19 +155,14 @@ function openAddUserModal() {
         `;
         roleSelect.disabled = false;
 
-        // Populate admin list
-        if (assignSelect) {
-            populateAdminList(assignSelect);
-        }
+        if (assignSelect) appendAdminOptions(assignSelect);
 
-        // Show/hide assignment based on role selection
         roleSelect.onchange = () => {
             if (assignGroup) {
                 assignGroup.style.display = (roleSelect.value === 'staff') ? 'block' : 'none';
             }
         };
 
-        // Show by default (Staff is default role)
         if (assignGroup) assignGroup.style.display = 'block';
     }
 
@@ -160,10 +170,8 @@ function openAddUserModal() {
     document.getElementById('userUsername').focus();
 }
 
-// Populate Admin List for Assignment
-function populateAdminList(selectElement) {
+function appendAdminOptions(selectElement) {
     const admins = users.filter(u => u.role === 'admin');
-
     selectElement.innerHTML = '<option value="">Unassigned</option>';
     admins.forEach(admin => {
         const option = document.createElement('option');
@@ -175,13 +183,13 @@ function populateAdminList(selectElement) {
 
 // Open Edit User Modal
 function openEditUserModal(user) {
+    const currentUser = window.currentUser || {};
     editingUserId = user.id;
     document.getElementById('userModalTitle').textContent = 'Edit User';
     document.getElementById('userUsername').value = user.username;
-    document.getElementById('userPassword').value = ''; // Leave blank
+    document.getElementById('userPassword').value = '';
     document.getElementById('userPassword').placeholder = 'Leave blank to keep current password';
 
-    // Role selection
     const roleSelect = document.getElementById('userRole');
     if (currentUser.role === 'super_admin') {
         roleSelect.innerHTML = `
@@ -191,7 +199,6 @@ function openEditUserModal(user) {
         `;
         roleSelect.disabled = false;
     } else {
-        // Admin cannot change roles
         roleSelect.innerHTML = `<option value="${user.role}">${user.role}</option>`;
         roleSelect.disabled = true;
     }
@@ -202,39 +209,24 @@ function openEditUserModal(user) {
 
 // Save User (Create or Update)
 async function saveUser() {
+    const currentUser = window.currentUser || {};
     const username = document.getElementById('userUsername').value.trim();
     const password = document.getElementById('userPassword').value;
     const role = document.getElementById('userRole').value;
     const assignToAdminId = document.getElementById('userAssignToAdmin')?.value || null;
 
-    if (!username) {
-        alert('Username is required');
-        return;
-    }
+    if (!username) return alert('Username is required');
 
-    // Create mode: password required
-    if (!editingUserId && !password) {
-        alert('Password is required for new users');
-        return;
-    }
+    if (!editingUserId && !password) return alert('Password is required for new users');
 
     try {
-        const userData = {
-            username,
-            role
-        };
+        const userData = { username, role };
 
         if (editingUserId) {
-            // UPDATE mode
             userData.id = editingUserId;
-            if (password) {
-                userData.password = password; // Only update if provided
-            }
+            if (password) userData.password = password;
         } else {
-            // CREATE mode
             userData.password = password;
-
-            // Only send assignToAdminId if Super Admin creating Staff
             if (currentUser.role === 'super_admin' && role === 'staff' && assignToAdminId) {
                 userData.managed_by_admin_id = assignToAdminId;
             }
@@ -243,8 +235,7 @@ async function saveUser() {
         const res = await ipcRenderer.invoke('save-user', userData);
         if (res.success) {
             document.getElementById('modalUser').style.display = 'none';
-            users = await ipcRenderer.invoke('get-users');
-            renderUserTable();
+            await loadUsers();
         } else {
             alert('Error: ' + res.error);
         }
@@ -256,12 +247,10 @@ async function saveUser() {
 // Delete User
 async function deleteUser(userId) {
     if (!confirm('Are you sure you want to delete this user?')) return;
-
     try {
         const res = await ipcRenderer.invoke('delete-user', userId);
         if (res.success) {
-            users = await ipcRenderer.invoke('get-users');
-            renderUserTable();
+            await loadUsers();
         } else {
             alert('Error: ' + res.error);
         }
@@ -270,7 +259,6 @@ async function deleteUser(userId) {
     }
 }
 
-// Close User Modal
 function closeUserModal() {
     document.getElementById('modalUser').style.display = 'none';
     editingUserId = null;
@@ -278,14 +266,10 @@ function closeUserModal() {
 
 // ==================== TRANSFER OWNERSHIP ====================
 
-let transferringUserId = null;
-
 function openTransferModal(user) {
     transferringUserId = user.id;
-
     document.getElementById('transferUsername').value = user.username;
 
-    // Show current admin or "Unassigned"
     if (user.managed_by_admin_id) {
         const manager = users.find(u => u.id === user.managed_by_admin_id);
         document.getElementById('transferCurrentAdmin').value = manager ? manager.username : 'Unknown';
@@ -293,7 +277,6 @@ function openTransferModal(user) {
         document.getElementById('transferCurrentAdmin').value = 'Unassigned';
     }
 
-    // Populate admin list (exclude current)
     const selectElement = document.getElementById('transferNewAdmin');
     const admins = users.filter(u => u.role === 'admin' && u.id !== user.managed_by_admin_id);
 
@@ -315,11 +298,7 @@ function closeTransferModal() {
 
 async function executeTransfer() {
     const newAdminId = document.getElementById('transferNewAdmin').value || null;
-
-    if (!transferringUserId) {
-        alert('No user selected for transfer');
-        return;
-    }
+    if (!transferringUserId) return alert('No user selected for transfer');
 
     try {
         const res = await ipcRenderer.invoke('transfer-user-ownership', {
@@ -329,8 +308,7 @@ async function executeTransfer() {
 
         if (res.success) {
             closeTransferModal();
-            users = await ipcRenderer.invoke('get-users');
-            renderUserTable();
+            await loadUsers();
         } else {
             alert('Error: ' + res.error);
         }
@@ -341,18 +319,13 @@ async function executeTransfer() {
 
 // ==================== ASSIGNED ACCOUNTS MODAL ====================
 
-// Store current assignment context globally
-let currentAssigningUserId = null;
-let currentAssigningUsername = null;
-
 async function showAssignedAccounts(userId, username) {
-    console.log('[showAssignedAccounts] Called with userId:', userId, 'username:', username);
+    const currentUser = window.currentUser || {};
     currentAssigningUserId = userId;
     currentAssigningUsername = username;
     document.getElementById('assignedAccountsUsername').textContent = username;
 
     try {
-        // Render assign button for Super Admin/Admin
         const canAssign = currentUser.role === 'super_admin' || currentUser.role === 'admin';
         const assignButton = canAssign ? `
             <button class="btn btn-primary" style="margin-bottom:16px; width:100%;" 
@@ -363,7 +336,6 @@ async function showAssignedAccounts(userId, username) {
         document.getElementById('assignAccountsButtonContainer').innerHTML = assignButton;
 
         const accounts = await ipcRenderer.invoke('get-user-assigned-accounts', userId);
-        console.log('[showAssignedAccounts] Received', accounts.length, 'accounts:', accounts);
         const list = document.getElementById('assignedAccountsList');
 
         if (accounts.length === 0) {
@@ -385,36 +357,10 @@ async function showAssignedAccounts(userId, username) {
         }
 
         const modal = document.getElementById('modalAssignedAccounts');
-        console.log('[showAssignedAccounts] Modal element:', modal);
-        console.log('[showAssignedAccounts] Modal display before:', modal?.style.display);
-        console.log('[showAssignedAccounts] List innerHTML length:', list?.innerHTML.length);
-
-        // Use !important to override CSS class that hides modal
-        modal.style.setProperty('display', 'flex', 'important');
-        // AGGRESSIVE VISIBILITY FORCING
-        modal.style.setProperty('visibility', 'visible', 'important');
-        modal.style.setProperty('opacity', '1', 'important');
-        modal.style.position = 'fixed';
-        modal.style.top = '0';
-        modal.style.left = '0';
-        modal.style.width = '100%';
-        modal.style.height = '100%';
-        modal.style.zIndex = '99999';
-
-        // Log computed styles
-        const computed = window.getComputedStyle(modal);
-        console.log('[showAssignedAccounts] COMPUTED STYLES:');
-        console.log('  display:', computed.display);
-        console.log('  visibility:', computed.visibility);
-        console.log('  opacity:', computed.opacity);
-        console.log('  position:', computed.position);
-        console.log('  zIndex:', computed.zIndex);
-        console.log('  width:', computed.width);
-        console.log('  height:', computed.height);
-
-        console.log('[showAssignedAccounts] Modal display after:', modal.style.display);
-        console.log('[showAssignedAccounts] Modal offsetParent:', modal.offsetParent);
-        console.log('[showAssignedAccounts] Modal parent:', modal.parentElement?.tagName);
+        if (modal) {
+            modal.style.setProperty('display', 'flex', 'important');
+            modal.classList.add('active'); // Add active class if CSS uses it
+        }
     } catch (err) {
         alert('Error loading assigned accounts: ' + err.message);
     }
@@ -426,11 +372,8 @@ async function unassignAccount(accountId, userId, username) {
     try {
         const res = await ipcRenderer.invoke('unassign-account', { accountId, userId });
         if (res.success) {
-            // Refresh modal to show updated list
             showAssignedAccounts(userId, username);
-            // Refresh user table to update counts
-            users = await ipcRenderer.invoke('get-users');
-            renderUserTable();
+            await loadUsers();
         } else {
             alert('Error: ' + res.error);
         }
@@ -444,10 +387,7 @@ async function showAssignAccountsDropdown() {
         const available = await ipcRenderer.invoke('get-available-accounts', currentAssigningUserId);
         const select = document.getElementById('assignAccountsSelect');
 
-        if (available.length === 0) {
-            alert('No available accounts to assign');
-            return;
-        }
+        if (available.length === 0) return alert('No available accounts to assign');
 
         select.innerHTML = available.map(acc => `
             <option value="${acc.id}">
@@ -465,10 +405,7 @@ async function executeAssign() {
     const select = document.getElementById('assignAccountsSelect');
     const selectedIds = Array.from(select.selectedOptions).map(opt => opt.value);
 
-    if (selectedIds.length === 0) {
-        alert('Please select at least one account');
-        return;
-    }
+    if (selectedIds.length === 0) return alert('Please select at least one account');
 
     try {
         const res = await ipcRenderer.invoke('assign-accounts', {
@@ -477,13 +414,9 @@ async function executeAssign() {
         });
 
         if (res.success) {
-            // Hide dropdown
             document.getElementById('assignAccountsDropdown').style.display = 'none';
-            // Refresh modal
             showAssignedAccounts(currentAssigningUserId, currentAssigningUsername);
-            // Refresh user table counts
-            users = await ipcRenderer.invoke('get-users');
-            renderUserTable();
+            await loadUsers();
         } else {
             alert('Error: ' + res.error);
         }
@@ -501,6 +434,7 @@ function closeAssignedAccountsModal() {
 }
 
 // Export functions to global scope
+window.loadUsers = loadUsers; // Exported for app.js
 window.renderUserTable = renderUserTable;
 window.openAddUserModal = openAddUserModal;
 window.openEditUserModal = openEditUserModal;

@@ -533,6 +533,60 @@ ipcMain.handle('bulk-revoke', async (event, { accountIds, userIds }) => {
     }
 });
 
+// Reset Database & Clear Sessions (CRITICAL FIX)
+ipcMain.handle('reset-db', async (event, { keepWorkflows }) => {
+    console.log('[reset-db] Starting complete database reset...');
+    const pool = await getPool();
+    const connection = await pool.getConnection();
+
+    try {
+        // 1. Close all open browsers
+        const { BrowserManager } = require('./src/managers/BrowserManager');
+        if (BrowserManager && BrowserManager.closeAll) {
+            await BrowserManager.closeAll();
+        }
+
+        // 2. Clear Session Files (Force Delete)
+        try {
+            const sessionsDir = path.join(app.getPath('userData'), 'sessions');
+            await fs.emptyDir(sessionsDir);
+            console.log('[reset-db] ✓ Sessions directory cleared.');
+        } catch (e) {
+            console.error('[reset-db] ⚠ Failed to clear sessions dir:', e.message);
+        }
+
+        // 3. Truncate Tables
+        await connection.beginTransaction();
+
+        await connection.query('SET FOREIGN_KEY_CHECKS = 0');
+        await connection.query('TRUNCATE TABLE account_assignments');
+        await connection.query('TRUNCATE TABLE accounts');
+        await connection.query('TRUNCATE TABLE proxies');
+        await connection.query('TRUNCATE TABLE extensions');
+        // await connection.query('TRUNCATE TABLE user_permissions'); // Keep permissions? Maybe reset.
+        // await connection.query('TRUNCATE TABLE audit_log');
+
+        if (!keepWorkflows) {
+            await connection.query('TRUNCATE TABLE workflow_nodes');
+            await connection.query('TRUNCATE TABLE automations');
+        }
+
+        await connection.query('SET FOREIGN_KEY_CHECKS = 1');
+
+        await connection.commit();
+        console.log('[reset-db] ✓ Database truncated.');
+
+        return { success: true };
+
+    } catch (err) {
+        await connection.rollback();
+        console.error('[reset-db] Failed:', err);
+        return { success: false, error: err.message };
+    } finally {
+        connection.release();
+    }
+});
+
 // Create new account
 ipcMain.handle('create-account', async (event, { name, loginUrl, proxy, fingerprint, auth, extensionsPath, notes, platformId, workflowId }) => {
     // Retry logic for network errors

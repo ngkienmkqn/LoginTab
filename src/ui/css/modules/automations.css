@@ -1,0 +1,126 @@
+/* Feature: Automation Editor (Drawflow) */
+
+.drawflow .drawflow-node {
+    background: #ffffff !important;
+    border: 1px solid #e0e0e0 !important;
+    border-radius: 8px !important;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05) !important;
+    width: 180px !important;
+    padding: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    z-index: 2 !important;
+    transition: all 0.2s ease;
+}
+
+.drawflow .drawflow-node:hover {
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1) !important;
+    transform: translateY(-2px);
+}
+
+.drawflow .drawflow-node.selected {
+    border: 1px solid var(--accent) !important;
+    box-shadow: 0 0 0 2px rgba(187, 134, 252, 0.3) !important;
+}
+
+/* Header Stripes */
+.drawflow .drawflow-node.start .node-header {
+    border-top: 4px solid #2e7d32;
+    color: #2e7d32;
+}
+
+.drawflow .drawflow-node.click .node-header {
+    border-top: 4px solid #1976d2;
+    color: #1976d2;
+}
+
+.drawflow .drawflow-node.type .node-header {
+    border-top: 4px solid #f57f17;
+    color: #f57f17;
+}
+
+.drawflow .drawflow-node.wait .node-header {
+    border-top: 4px solid #7b1fa2;
+    color: #7b1fa2;
+}
+
+.drawflow .drawflow-node.find .node-header {
+    border-top: 4px solid #0097a7;
+    color: #0097a7;
+}
+
+.drawflow .drawflow-node.twofa .node-header {
+    border-top: 4px solid #c2185b;
+    color: #c2185b;
+}
+
+.node-header {
+    padding: 10px 15px;
+    background: #fff;
+    font-weight: 700;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid #f0f0f0;
+    border-radius: 8px 8px 0 0;
+    margin-bottom: 0;
+}
+
+.node-body {
+    padding: 10px 15px;
+    background: #fff;
+    color: #666;
+    font-size: 12px;
+    border-radius: 0 0 8px 8px;
+    min-height: 40px;
+}
+
+/* Ports */
+.drawflow .drawflow-node .inputs,
+.drawflow .drawflow-node .outputs {
+    width: 0;
+    display: flex;
+    justify-content: center;
+}
+
+.drawflow .drawflow-node .input,
+.drawflow .drawflow-node .output {
+    width: 12px;
+    height: 12px;
+    border: 2px solid #ccc;
+    background: #fff;
+    border-radius: 50%;
+    position: absolute;
+    z-index: 10;
+}
+
+.drawflow .drawflow-node .input {
+    top: 20px;
+    left: -6px;
+}
+
+.drawflow .drawflow-node .output {
+    top: 20px;
+    right: -6px;
+}
+
+/* Property Panel */
+#property-panel {
+    position: absolute;
+    top: 60px;
+    right: 0;
+    bottom: 0;
+    width: 300px;
+    background: var(--bg-panel);
+    border-left: 1px solid var(--border);
+    transform: translateX(100%);
+    transition: transform 0.3s ease;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+}
+
+#property-panel.active {
+    transform: translateX(0);
+}

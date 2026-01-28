@@ -19,8 +19,9 @@ class FingerprintGenerator {
         // Get OS-specific configuration
         const osConfig = this.getOSConfig(os);
 
-        // HIGH TRUST: Use only very recent Stable Chrome versions (Updated to 139/140/141)
-        const chromeVersion = this.pickRandom(random, ['141.0.0.0', '140.0.0.0', '139.0.0.0']);
+        // HIGH TRUST: Strict Iron Browser Match (v141) to prevent "Masking Detected"
+        // User reports Iron v141.0.7150.0
+        const chromeVersion = '141.0.0.0';
 
         const fingerprint = {
             // Screen: Randomize common resolutions
@@ -231,10 +232,6 @@ class FingerprintGenerator {
      * Generate realistic screen resolution
      * STRICTLY 2560x1440 (Proven Success)
      */
-    /**
-     * Generate realistic screen resolution
-     * STRICTLY 2560x1440 (Proven Success)
-     */
     static generateResolution(random) {
         const resolutions = [
             '1920x1080', '1920x1080', '1920x1080', // weighted
@@ -250,8 +247,8 @@ class FingerprintGenerator {
      * Generate realistic User Agent
      */
     static generateUserAgent(random) {
-        const chromeVersions = ['132.0.0.0', '131.0.0.0', '130.0.0.0'];
-        const version = this.pickRandom(random, chromeVersions);
+        // Strict Match for Iron 141
+        const version = '141.0.0.0';
         return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${version} Safari/537.36`;
     }
 
@@ -394,6 +391,16 @@ class FingerprintGenerator {
             },
             generated: new Date().toISOString()
         };
+    }
+
+    /**
+     * Check if a fingerprint matches the "winning" configuration
+     * @param {Object} fingerprint 
+     */
+    static isWinningConfig(fingerprint) {
+        if (!fingerprint) return false;
+        // Check for key winning attributes (RTX 3060 is the main anchor)
+        return fingerprint.webglRenderer && fingerprint.webglRenderer.includes('RTX 3060');
     }
 }
 

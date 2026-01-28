@@ -9,6 +9,8 @@ const puppeteer = require('puppeteer-core');
 const path = require('path');
 const fs = require('fs-extra');
 const { app } = require('electron');
+const { spawn } = require('child_process');
+const net = require('net');
 
 // ... (imports)
 
@@ -33,7 +35,268 @@ class BrowserManager {
     // Track active browser instances by account ID
     static activeBrowsers = new Map();
 
+    /**
+     * Force close all active browser instances
+     */
+    static async closeAll() {
+        console.log(`[BrowserManager] Closing all ${BrowserManager.activeBrowsers.size} active browsers...`);
+        const closePromises = [];
+
+        for (const [id, browser] of BrowserManager.activeBrowsers.entries()) {
+            try {
+                if (browser.close) {
+                    closePromises.push(browser.close());
+                } else if (browser.process) {
+                    process.kill(browser.process().pid);
+                }
+            } catch (e) {
+                console.error(`[BrowserManager] Error closing browser ${id}:`, e);
+            }
+        }
+
+        await Promise.allSettled(closePromises);
+        BrowserManager.activeBrowsers.clear();
+        console.log('[BrowserManager] All browsers closed.');
+    }
+
+
+
+    /**
+     * INJECT profile data into Portable location (Windows N)
+     */
+    static async injectProfile(source, target) {
+        console.log(`[BrowserManager] Injecting Profile: ${source} -> ${target}`);
+        try {
+            await fs.emptyDir(target); // WIPE standard location
+            if (await fs.pathExists(source)) {
+                await fs.copy(source, target);
+                console.log('[BrowserManager] ✓ Injection Complete');
+            } else {
+                console.log('[BrowserManager] No existing session to inject (Fresh Start)');
+            }
+        } catch (e) {
+            console.error('[BrowserManager] Injection Failed:', e);
+            throw new Error('Profile Injection Failed: ' + e.message);
+        }
+    }
+
+    /**
+     * EXTRACT profile data from Portable location (Windows N)
+     */
+    static async extractProfile(source, target) {
+        console.log(`[BrowserManager] Extracting Profile: ${source} -> ${target}`);
+        const maxRetries = 5;
+
+        for (let i = 1; i <= maxRetries; i++) {
+            try {
+                await fs.ensureDir(target);
+                // Use graceful-fs or simple retry
+                await fs.copy(source, target, { overwrite: true, errorOnExist: false });
+
+                // Only wipe AFTER successful copy
+                try { await fs.emptyDir(source); } catch (e) { }
+
+                console.log('[BrowserManager] ✓ Extraction Complete & Cleaned');
+                return; // Success
+            } catch (e) {
+                if (e.code === 'EBUSY' || e.code === 'EPERM') {
+                    console.log(`[BrowserManager] File Locked (Attempt ${i}/${maxRetries}). Waiting 2s...`);
+                    await new Promise(r => setTimeout(r, 2000));
+                } else {
+                    console.error('[BrowserManager] Extraction Failed (Fatal):', e);
+                    break;
+                }
+            }
+        }
+        console.error(`[BrowserManager] Extraction Failed after ${maxRetries} attempts.`);
+    }
+
     static async launchProfile(account, mode = null) {
+        // [Browser Detection Strategy]
+        // 1. System Chrome/Edge (Primary for Windows N / Stability)
+        // 2. Fallback to Mac standard paths if on macOS
+
+        let executablePath = null;
+        let browserType = 'chrome'; // Default to chrome args
+
+        if (process.platform === 'win32') {
+            executablePath = await BrowserManager.detectSystemBrowser();
+            if (!executablePath) {
+                console.error('[BrowserManager] No System Browser Found!');
+                throw new Error('No supported browser found (Chrome/Edge). Please install Google Chrome.');
+            }
+            console.log(`[BrowserManager] ✓ Found System Browser: ${executablePath}`);
+        } else if (process.platform === 'darwin') {
+            // macOS Logic (Keep existing or switch to system chrome?)
+            // Let's stick to System Chrome for Mac too for consistency in v2.5.0 revert
+            executablePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+            if (!fs.existsSync(executablePath)) {
+                executablePath = '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
+            }
+            if (!fs.existsSync(executablePath)) {
+                // Fallback to Iron just in case? No, sticking to Plan.
+                throw new Error('Google Chrome or Edge not found.');
+            }
+        }
+
+        // Remove Injection Logic (Not needed for System Browser with properly separated --user-data-dir)
+        const userDataDir = path.join(app.getPath('userData'), 'sessions', account.id);
+        await fs.ensureDir(userDataDir);
+
+        // [Cloud Sync] Restore Download Logic
+        console.log(`[BrowserManager] Syncing session for: ${account.name}`);
+        await SyncManager.downloadSession(account.id);
+        // Note: System Chrome manages LocalStorage/Cookies in userDataDir, 
+        // but downloadSession ensures we have a baseline if this is a fresh machine.
+
+        // Check if browser already open for this account
+        if (BrowserManager.activeBrowsers.has(account.id)) {
+            const existingBrowser = BrowserManager.activeBrowsers.get(account.id);
+            try {
+                const pages = await existingBrowser.pages();
+                if (pages.length > 0) {
+                    console.log(`[BrowserManager] ⚠ Account already open, focusing existing browser: ${account.name}`);
+                    await pages[0].bringToFront();
+                    return existingBrowser;
+                }
+            } catch (e) {
+                console.log(`[BrowserManager] Existing browser disconnected, creating new instance`);
+                BrowserManager.activeBrowsers.delete(account.id);
+            }
+        }
+
+        console.log(`[BrowserManager] DEBUG: System Chrome Mode for: ${account.id}`);
+
+        // Get Free Port
+        const debugPort = await BrowserManager.getFreePort();
+        console.log(`[BrowserManager] Assigned Debug Port: ${debugPort}`);
+
+        const args = [
+            '--no-first-run',
+            '--no-default-browser-check',
+            '--disable-save-password-bubble',
+            '--password-store=basic',
+            `--remote-debugging-port=${debugPort}`,
+            `--user-data-dir=${userDataDir}`,
+            '--window-size=1920,1080',
+            '--disable-gpu-shader-disk-cache',
+            '--disable-background-networking',
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding'
+        ];
+
+        // Fingerprint / Proxy Args would go here if we were doing stealth,
+        // but for System Chrome revert, we keep it simple or minimal.
+        // Let's add Proxy back if present.
+        let anonymizedProxyUrl = null;
+        if (account.proxy_config) {
+            try {
+                let proxy = typeof account.proxy_config === 'string'
+                    ? JSON.parse(account.proxy_config)
+                    : account.proxy_config;
+
+                if (proxy && proxy.host) {
+                    anonymizedProxyUrl = await ProxyChain.anonymizeProxy(`http://${proxy.username}:${proxy.password}@${proxy.host}:${proxy.port}`);
+                    args.push(`--proxy-server=${anonymizedProxyUrl}`);
+                    console.log('[Proxy] Anonymized Proxy injected.');
+                }
+            } catch (e) { console.error('[Proxy] Error parsing proxy:', e); }
+        }
+
+        try {
+            console.log(`[BrowserManager] Launching Puppeteer with System Browser: ${executablePath}`);
+            const browser = await puppeteer.launch({
+                executablePath: executablePath,
+                headless: false,
+                defaultViewport: null,
+                userDataDir: userDataDir,
+                ignoreHTTPSErrors: true,
+                ignoreDefaultArgs: ['--enable-automation'],
+                args: args,
+                pipe: false // Use WebSocket
+            });
+
+            // Store instance
+            BrowserManager.activeBrowsers.set(account.id, browser);
+
+            const pages = await browser.pages();
+            const page = pages.length > 0 ? pages[0] : await browser.newPage();
+
+            // Sync Session (Cookies/Storage)
+            // Note: System Chrome might manage this itself, but injecting our DB session is still good.
+            // Wait, v2.5.0 likely did this.
+            // Let's restore simple Sync logic (inject cookies if missing).
+            // Actually, we should just let Chrome handle its profile if we are using --user-data-dir natively.
+            // But if user expects Sync *from DB*, we should probably inject.
+            // Let's assume Native Profile usage for now (persistence via disk).
+            // But we should UPDATE DB on exit.
+
+            if (account.loginUrl) {
+                try { await page.goto(account.loginUrl); } catch (e) { }
+            }
+
+            // Cleanup Listener
+            const browserProcess = browser.process();
+            if (browserProcess) {
+                browserProcess.on('exit', async (code) => {
+                    console.log(`[BrowserManager] System Chrome exited (Code ${code}). Syncing...`);
+                    // We can call cleanupSession or simplified version
+                    // Since we are not detecting exit reliably on Windows N iron, but this is CHROME.
+                    // Chrome usually exits fine.
+                    await BrowserManager.cleanupSession(account.id, null, userDataDir, anonymizedProxyUrl);
+                });
+            }
+
+            browser.on('disconnected', () => {
+                BrowserManager.activeBrowsers.delete(account.id);
+            });
+
+            return browser;
+
+        } catch (err) {
+            console.error('[BrowserManager] LAUNCH FAILED:', err);
+            throw err;
+        }
+    }
+
+    static async detectSystemBrowser() {
+        const potentialPaths = [
+            'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+            'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+            'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+            'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+            process.env.LOCALAPPDATA + '\\Google\\Chrome\\Application\\chrome.exe',
+            process.env.LOCALAPPDATA + '\\Microsoft\\Edge\\Application\\msedge.exe'
+        ];
+
+        for (const p of potentialPaths) {
+            if (fs.existsSync(p)) {
+                return p;
+            }
+        }
+        return null;
+    }
+
+    static async launchProfile_OLD(account, mode = null) { // Renaming old one to inactive
+
+        // [Windows N] SINGLE INSTANCE ENFORCEMENT
+        // Because of Portable Wrapper shared data, we must prevent multiple instances.
+        if (process.platform === 'win32') {
+            const portablePath = path.join(app.getAppPath(), 'resources', 'iron', 'IronPortable.exe');
+            // If using Portable, enforce single instance
+            if (fs.existsSync(portablePath)) {
+                if (BrowserManager.activeBrowsers.size > 0) {
+                    // Check if it's the SAME account (focus it)
+                    if (BrowserManager.activeBrowsers.has(account.id)) {
+                        // Fallthrough to existing logic will handle focus
+                    } else {
+                        throw new Error('WINDOWS N LIMITATION: Only one profile can be open at a time (Shared Portable Data). Please close the active profile first.');
+                    }
+                }
+            }
+        }
+
         // Check if browser already open for this account
         if (BrowserManager.activeBrowsers.has(account.id)) {
             const existingBrowser = BrowserManager.activeBrowsers.get(account.id);
@@ -86,30 +349,15 @@ class BrowserManager {
             // Load existing fingerprint
             console.log('[Fingerprint] ✓ Loaded existing fingerprint from database');
 
-            // FORCE UPGRADE if:
-            // 1. Non-Winning Config (Resolution + WebGL mismatch)
-            // 2. OLD FINGERPRINT missing new OS-specific fields
+            const isWinningConfig = FingerprintGenerator.isWinningConfig(account.fingerprint);
 
-            // "Natural" fingerprints have null webglRenderer. Consider them "Winning" (Valid).
-            const isNatural = !account.fingerprint.webglRenderer;
+            // AUTO-UPGRADE FINGERPRINT (If not winning config)
+            if (!isWinningConfig && account.fingerprint) {
 
-            const isWinningConfig = isNatural || (
-                account.fingerprint.resolution === '2560x1440' &&
-                account.fingerprint.webglRenderer &&
-                account.fingerprint.webglRenderer.includes('RTX 3060')
-            );
-
-            const hasOSFields =
-                account.fingerprint.platformName &&
-                account.fingerprint.fonts &&
-                account.fingerprint.plugins;
-
-
-            // FINGERPRINT LOCK: Disabled auto-upgrade to maintain session consistency
-            // Tazapay and similar services validate fingerprint changes as suspicious activity
-            // Once fingerprint is generated, it stays locked to prevent session invalidation
-            /*
-            if (!isWinningConfig || !hasOSFields) {
+                // FINGERPRINT LOCK: Disabled auto-upgrade to maintain session consistency
+                // Tazapay and similar services validate fingerprint changes as suspicious activity
+                // Once fingerprint is generated, it stays locked to prevent session invalidation
+                /*
                 if (!isWinningConfig) {
                     console.log('[Fingerprint] ⚠ NON-OPTIMAL FINGERPRINT DETECTED');
                     console.log(`[Fingerprint]   Current: ${account.fingerprint.resolution} / ${account.fingerprint.webglRenderer}`);
@@ -118,13 +366,13 @@ class BrowserManager {
                     console.log('[Fingerprint] ⚠ OLD FINGERPRINT DETECTED (Missing OS-specific fields)');
                 }
                 console.log('[Fingerprint] ↻ UPGRADING to New Fingerprint (Winning Config + OS Consistency)...');
-
+    
                 // Get OS from account (stored in fingerprint_config.os or default to 'win')
                 const os = account.fingerprint?.os || account.fingerprint_config?.os || 'win';
-
+    
                 // Regenerate (Generates ONLY winning config now)
                 account.fingerprint = FingerprintGenerator.generateFingerprint(account.id, os);
-
+    
                 // Save immediately
                 const pool = await getPool();
                 await pool.query(
@@ -132,13 +380,15 @@ class BrowserManager {
                     [JSON.stringify(account.fingerprint), account.id]
                 );
                 console.log('[Fingerprint] ✓ Upgraded & Saved New Fingerprint');
-            }
-            */
-            console.log('[Fingerprint] 🔒 Fingerprint locked (no auto-upgrade)');
+                */
+                console.log('[Fingerprint] 🔒 Fingerprint locked (no auto-upgrade)');
 
-            console.log(`[Fingerprint]   Generated: ${account.fingerprint.generated} `);
-            console.log(`[Fingerprint]   Resolution: ${account.fingerprint.resolution} `);
-            console.log(`[Fingerprint]   WebGL: ${account.fingerprint.webglRenderer || 'Natural (Real)'} `);
+                if (account.fingerprint) {
+                    console.log(`[Fingerprint]   Generated: ${account.fingerprint.generated} `);
+                    console.log(`[Fingerprint]   Resolution: ${account.fingerprint.resolution} `);
+                    console.log(`[Fingerprint]   WebGL: ${account.fingerprint.webglRenderer || 'Natural (Real)'} `);
+                }
+            }
         }
 
         // 1. Download session from MySQL before launch
@@ -146,32 +396,60 @@ class BrowserManager {
         const storageData = await SyncManager.downloadStorage(account.id);
 
         console.log(`[BrowserManager] Launching: ${account.name} (${account.id})`);
+        console.log('[BrowserManager] DEBUG: Code Version -> Iron-Revert-v2 (Should force Direct Iron)');
 
-        // v2.5.1: Use Iron Browser 141 Portable for IPHey 5/5
-        const bundledIronPath = path.join(
-            app.getAppPath(),
-            'resources',
-            'iron',
-            'Iron',
-            'chrome.exe'
-        );
+        // v2.5.3: Cross-Platform Iron Support (Windows & macOS)
+        let executablePath = null;
+        let ironCwd = null;
 
-        let executablePath = bundledIronPath;
+        if (process.platform === 'darwin') {
+            // macOS Logic
+            const macStandardPath = '/Applications/Iron.app/Contents/MacOS/Iron';
+            const macBundledPath = path.join(app.getAppPath(), 'resources', 'iron', 'Iron.app', 'Contents', 'MacOS', 'Iron');
 
-        // Fallback to system Chrome if Iron not found
-        if (!fs.existsSync(bundledIronPath)) {
-            console.log('[BrowserManager] ⚠️ Iron Browser not found, using system Chrome');
-            const possiblePaths = [
-                'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-                'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-                path.join(require('os').homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe')
-            ];
+            if (fs.existsSync(macBundledPath)) {
+                executablePath = macBundledPath;
+                ironCwd = path.dirname(executablePath);
+                console.log('[BrowserManager] ✓ Found Bundled Iron (macOS)');
+            } else if (fs.existsSync(macStandardPath)) {
+                executablePath = macStandardPath;
+                ironCwd = path.dirname(executablePath);
+                console.log('[BrowserManager] ✓ Found Standard Iron (macOS)');
+            } else {
+                console.error('[BrowserManager] ❌ Iron Browser NOT FOUND on macOS.');
+                throw new Error('Iron Browser not found. Please install in /Applications/Iron.app or resources/iron/');
+            }
+        } else {
+            // Windows Logic (Direct Launch: Iron/iron.exe)
+            // We bypass IronPortable.exe to ensure process isolation and correct exit tracking.
+            // This enables Multi-Profile support and reliable Sync-on-Exit.
 
-            for (const p of possiblePaths) {
-                if (fs.existsSync(p)) {
-                    executablePath = p;
-                    break;
-                }
+            const directPath = path.join(app.getAppPath(), 'resources', 'iron', 'Iron', 'iron.exe');
+            const portablePath = path.join(app.getAppPath(), 'resources', 'iron', 'IronPortable.exe');
+
+            if (fs.existsSync(portablePath)) {
+                // Use IronPortable Wrapper (REQUIRED for Windows N to fix crashes)
+                executablePath = portablePath;
+                ironCwd = path.dirname(portablePath);
+                console.log('[BrowserManager] ✓ Found IronPortable Wrapper (Preferred for Windows N)');
+
+                // [Windows N] INJECT DATA
+                // Copy session -> resources/iron/Profile
+                const targetProfileDir = path.join(ironCwd, 'Profile');
+                const userDataDir = path.join(app.getPath('userData'), 'sessions', account.id); // Valid source
+
+                // Ensure source exists and inject
+                await fs.ensureDir(userDataDir);
+                await BrowserManager.injectProfile(userDataDir, targetProfileDir);
+
+            } else if (fs.existsSync(directPath)) {
+                // Fallback to Direct Iron if portable wrapper is missing
+                executablePath = directPath;
+                ironCwd = path.dirname(directPath);
+                console.log('[BrowserManager] ⚠ Using Direct Iron (Legacy Mode)');
+            } else {
+                console.error('[BrowserManager] ❌ Iron Browser NOT FOUND.');
+                throw new Error('Critical: Iron Browser executable not found. Please reinstall application.');
             }
         }
 
@@ -207,19 +485,22 @@ class BrowserManager {
             console.warn('[Browser] Failed to patch preferences:', e);
         }
 
+        // Get Free Port for Debugging
+        const debugPort = await BrowserManager.getFreePort();
+        console.log(`[BrowserManager] Assigned Debug Port: ${debugPort}`);
+
         const args = [
+            '--test-type',
+            '--ignore-certificate-errors',
             '--no-first-run',
-            '--no-default-browser-check',
-            '--disable-infobars', // v2.5.0: Hide automation infobar
-            '--exclude-switches=enable-automation', // v2.5.0: Hide automation banner
-            '--disable-blink-features=AutomationControlled', // v2.5.0: Remove automation controlled
-            '--disable-save-password-bubble',
-            '--password-store=basic',
-            '--use-mock-keychain',
-            '--disable-popup-blocking',
-            '--disable-notifications',
-            `--user-data-dir=${userDataDir}`
+            '--no-sandbox',
+            `--remote-debugging-port=${debugPort}`
         ];
+
+        // ALWAYS use isolated User Data Directory
+        // Since we are launching Iron directly (or forcing Portable to behave), we must specify the profile path.
+        // This ensures Multi-Profile concurrency works correctly.
+        args.push(`--user-data-dir=${userDataDir}`);
 
         if (account.fingerprint && account.fingerprint.resolution) {
             args.push(`--window-size=${account.fingerprint.resolution.replace('x', ',')}`);
@@ -288,28 +569,160 @@ class BrowserManager {
             console.log('[Proxy] Starting without proxy (Direct).');
         }
 
-        // MANUAL ADDITION (Since Stealth is gone) (Re-enabled)
-        // CRITICAL UPDATE: REMOVED FLAG to fix "Unsupported Command-Line Flag"
-        // We now hide automation using the Page Script above manually.
         // args.push('--disable-blink-features=AutomationControlled');
-        console.log('[BrowserManager] Launch Args (Manual + Pure Puppeteer + No Flag):', args);
+        // args.push('--no-sandbox'); // Moved up
 
-        const browser = await puppeteer.launch({
-            executablePath,
-            headless: false,
-            defaultViewport: null,
-            userDataDir,
-            args: args, // Use direct args
-            ignoreHTTPSErrors: true,
-            ignoreDefaultArgs: true, // Keep this true (Clean Slate)
-            pipe: true // CRITICAL: Required for packaged Electron apps to communicate with Chrome
+        // UI & EXTENSION POLISH
+        // args.push('--test-type'); // Moved to top for suppression effectiveness
+        args.push('--disable-external-extensions'); // Blocks external/system extensions (McAfee, etc.)
+        args.push('--disable-background-mode'); // CRITICAL: Ensures process exits when window closes (fixes Sync)
+        args.push('--disable-background-networking');
+        args.push('--disable-renderer-backgrounding');
+
+        if (proxyExtensionPath) {
+            args.push(`--disable-extensions-except=${proxyExtensionPath}`);
+        } else {
+            // If no proxy extension is needed, we can be more aggressive if desired
+            // args.push('--disable-extensions');
+        }
+
+        // STABILITY FIXES (Cross-Platform)
+        // Fix for Windows N (Missing Media Foundation) and general stability
+        args.push('--disable-features=MediaFoundation');
+        args.push('--disable-gpu-shader-disk-cache'); // Prevent some GPU artifacts
+        // args.push('--disable-gpu'); // Uncomment if glitches persist
+
+        console.log('[BrowserManager] Launch Args (Spawn Strategy):', args);
+
+
+
+        // --- PROFILE INJECTION REMOVED ---
+        // We now use Direct Launch with --user-data-dir, so native Chromium isolation handles this.
+        // No need to copy/paste data to 'resources/iron/Profile' anymore.
+        /*
+        if (process.platform === 'win32' && executablePath.includes('IronPortable.exe')) {
+             ... Logic Removed ...
+        }
+        */
+
+        console.log(`[BrowserManager] Spawning: ${executablePath}`);
+        console.log(`[BrowserManager] CWD: ${ironCwd}`);
+
+        // SPAWN PROCESS
+        const browserProcess = await BrowserManager.spawnBrowser(executablePath, args, ironCwd);
+
+        // CONNECT VIA PUPPETEER
+        let browser = null;
+        let connectRetries = 10;
+
+        while (connectRetries > 0) {
+            try {
+                console.log(`[BrowserManager] Connecting to port ${debugPort}... (${connectRetries})`);
+                browser = await puppeteer.connect({
+                    browserURL: `http://127.0.0.1:${debugPort}`,
+                    defaultViewport: null
+                });
+                break; // Connected!
+            } catch (e) {
+                connectRetries--;
+                if (connectRetries === 0) {
+                    console.warn(`[BrowserManager] ⚠ AUTOMATION FAILED: Could not connect to port ${debugPort}.`);
+                    console.warn(`[BrowserManager] Switching to MANUAL MODE (Sync-on-Exit) for: ${executablePath}`);
+
+                    // FALLBACK: Manual Mode
+                    // If IronPortable wrapper blocks the port, we assume it waits for exit.
+                    // We attach the save logic to the process exit event.
+                    browserProcess.on('exit', async (code) => {
+                        console.log(`[BrowserManager] Manual Mode: Process exited with code ${code}. Syncing...`);
+                        await BrowserManager.cleanupSession(account.id, portableProfilePath, userDataDir, anonymizedProxyUrl);
+                    });
+
+                    // We cannot return a puppeteer browser, but we must not throw to allow the user to browse.
+                    // We return a "Dummy" object to preventing crashing, though automations will fail.
+
+                    // ROBUST MANUAL MODE: Polling Watcher
+                    // Windows N / Iron sometimes swallows the 'exit' event from spawn.
+                    // We use manual PID polling to guarantee detection of browser closure.
+                    const EventEmitter = require('events');
+                    const manualEmitter = new EventEmitter();
+                    const pid = browserProcess.pid;
+
+                    console.log(`[BrowserManager] Watcher started for PID: ${pid}`);
+
+                    const watcher = setInterval(() => {
+                        try {
+                            process.kill(pid, 0); // Check if running (throws if not)
+                        } catch (e) {
+                            clearInterval(watcher);
+                            console.log(`[BrowserManager] Watcher: PID ${pid} gone. Triggering disconnect.`);
+                            manualEmitter.emit('disconnected');
+                        }
+                    }, 1000);
+
+                    const manualBrowser = {
+                        ignoreHTTPSErrors: true,
+                        pages: async () => [],
+                        newPage: async () => { throw new Error('Automation unavailable in Manual Mode'); },
+                        close: async () => { clearInterval(watcher); try { process.kill(pid); } catch (e) { } },
+                        process: () => browserProcess,
+                        isValid: true, // Marker
+                        on: (event, handler) => {
+                            if (event === 'disconnected') {
+                                // Listen to our reliable polling emitter
+                                manualEmitter.on('disconnected', handler);
+                                // Also attach to process exit just in case (redundancy)
+                                browserProcess.on('exit', () => manualEmitter.emit('disconnected'));
+                            }
+                            return manualBrowser;
+                        },
+                        once: (event, handler) => {
+                            if (event === 'disconnected') {
+                                manualEmitter.once('disconnected', handler);
+                            }
+                            return manualBrowser;
+                        },
+                        emit: (evt, ...pipeline) => manualEmitter.emit(evt, ...pipeline),
+                        removeListener: (evt, handler) => manualEmitter.removeListener(evt, handler)
+                    };
+
+                    // Hook internal cleanup to the emitter too
+                    manualEmitter.once('disconnected', async () => {
+                        console.log(`[BrowserManager] Manual Mode: Disconnected signal received. Syncing...`);
+
+                        // [Windows N] EXTRACTION (Sync Back)
+                        if (process.platform === 'win32' && executablePath && executablePath.includes('IronPortable')) {
+                            const targetProfileDir = path.join(ironCwd, 'Profile');
+                            // userDataDir is already defined in scope as the Source/Destination
+                            await BrowserManager.extractProfile(targetProfileDir, userDataDir);
+                        }
+
+                        await BrowserManager.cleanupSession(account.id, null, userDataDir, anonymizedProxyUrl);
+                    });
+
+                    return manualBrowser;
+                }
+                await new Promise(r => setTimeout(r, 1000)); // Wait 1s
+            }
+        }
+
+        console.log('[BrowserManager] ✓ PUPPETEER CONNECTED!');
+
+        const pages = await browser.pages();
+        const page = pages[0] || await browser.newPage();
+        BrowserManager.lastPage = page; // Restore for AutomationManager compatibility
+
+        // MINIMAL FINGERPRINT ONLY (User requested: remove all evasion scripts)
+        if (account.fingerprint && account.fingerprint.userAgent) {
+            await page.setUserAgent(account.fingerprint.userAgent);
+        }
+
+        // Inject Automation Scripts if needed (Simplified)
+        await page.evaluateOnNewDocument(() => {
+            Object.defineProperty(navigator, 'webdriver', { get: () => false });
         });
 
-        // ---------------------------------------------------------
-        // EVASION INJECTION (Critical Step)
-        // ---------------------------------------------------------
-        const pages = await browser.pages();
-        const evasionPage = pages.length > 0 ? pages[0] : await browser.newPage();
+        // Add to active map
+        BrowserManager.activeBrowsers.set(account.id, browser);
 
         // HYBRID SYNC: Inject All Storage Data (Cookies + LocalStorage + SessionStorage)
         if (storageData) {
@@ -318,7 +731,7 @@ class BrowserManager {
                 console.log(`[Sync] ✓ Downloaded ${storageData.cookies.length} cookies from DB`);
                 console.log(`[Sync] Cookie domains:`, storageData.cookies.map(c => c.domain).join(', '));
                 try {
-                    await evasionPage.setCookie(...storageData.cookies);
+                    await page.setCookie(...storageData.cookies);
                     console.log(`[Sync] ✓ Cookies injected successfully`);
                 } catch (err) {
                     console.error(`[Sync] ✗ Cookie injection failed:`, err.message);
@@ -328,7 +741,7 @@ class BrowserManager {
             // Inject LocalStorage
             if (storageData.localStorage && Object.keys(storageData.localStorage).length > 0) {
                 try {
-                    await evasionPage.evaluateOnNewDocument((data) => {
+                    await page.evaluateOnNewDocument((data) => {
                         for (const [key, value] of Object.entries(data)) {
                             localStorage.setItem(key, value);
                         }
@@ -342,7 +755,7 @@ class BrowserManager {
             // Inject SessionStorage
             if (storageData.sessionStorage && Object.keys(storageData.sessionStorage).length > 0) {
                 try {
-                    await evasionPage.evaluateOnNewDocument((data) => {
+                    await page.evaluateOnNewDocument((data) => {
                         for (const [key, value] of Object.entries(data)) {
                             sessionStorage.setItem(key, value);
                         }
@@ -356,57 +769,32 @@ class BrowserManager {
             console.log('[Sync] ⚠ No storage data found in DB for this account');
         }
 
-        const page = evasionPage; // Restore 'page' alias for downstream compatibility
-
-        // 1. Remove "cdc_" property (Puppeteer marker)
-        // 2. Inject advanced evasion scripts before ANY script loads
-        // 1. Inject advanced evasion scripts before ANY script loads
-        // (CDC removal is included in PuppeteerEvasion)
-
-        // IPHEY FIX: PuppeteerEvasion DISABLED
-        // The custom evasion scripts in PuppeteerEvasion.js break IPHey's fingerprint detection
-        // Stealth Plugin alone is sufficient and IPHey-compatible
-        // const evasionScript = PuppeteerEvasion.getAllEvasionScripts(account.fingerprint);
-        // await evasionPage.evaluateOnNewDocument(evasionScript);
-        console.log('[Evasion] Manual Mode (Stealth Plugin Disabled)');
-
-        // PROXY PROTECTION: Prevent WebRTC IP leak when using proxy
-        if (account.proxy && account.proxy.host) {
-            console.log('[Proxy] Injecting WebRTC leak protection...');
-            await evasionPage.evaluateOnNewDocument(() => {
-                // Block WebRTC from exposing local IP addresses
-                const originalGetUserMedia = navigator.mediaDevices.getUserMedia;
-                navigator.mediaDevices.getUserMedia = function () {
-                    return Promise.reject(new DOMException('Permission denied', 'NotAllowedError'));
-                };
-
-                // Override RTCPeerConnection to prevent IP leak
-                const originalRTCPeerConnection = window.RTCPeerConnection;
-                window.RTCPeerConnection = function (config = {}) {
-                    // Force relay-only mode (no local IP exposure)
-                    if (!config.iceServers) config.iceServers = [];
-                    config.iceTransportPolicy = 'relay';
-                    return new originalRTCPeerConnection(config);
-                };
-                window.RTCPeerConnection.prototype = originalRTCPeerConnection.prototype;
-
-                // Block mDNS candidate gathering
-                const originalCreateOffer = RTCPeerConnection.prototype.createOffer;
-                RTCPeerConnection.prototype.createOffer = function (options) {
-                    if (!options) options = {};
-                    options.offerToReceiveAudio = false;
-                    options.offerToReceiveVideo = false;
-                    return originalCreateOffer.apply(this, arguments);
-                };
-            });
+        // AUTO-NAVIGATE (UX Improvement) - Execute AFTER cookie injection
+        if (account.loginUrl && account.loginUrl.startsWith('http')) {
+            console.log(`[BrowserManager] Auto-navigating to: ${account.loginUrl}`);
+            try {
+                await page.goto(account.loginUrl);
+            } catch (e) {
+                console.warn('[BrowserManager] Auto-navigation failed:', e.message);
+            }
         }
 
+        console.log('[BrowserManager] ✓ Browser instance stored for account:', account.name);
 
-
-
+        // IPC: Register automation mode handler
         browser.on('disconnected', async () => {
             console.log(`[BrowserManager] Browser closed. Cleaning up...`);
             BrowserManager.activeBrowsers.delete(account.id);
+
+            // SAVE BACK PORTABLE PROFILE
+            if (portableProfilePath) {
+                try {
+                    console.log(`[BrowserManager] 💾 Saving Portable Profile back to ${userDataDir}...`);
+                    await fs.copy(portableProfilePath, userDataDir, { overwrite: true });
+                } catch (err) {
+                    console.error('[BrowserManager] Failed to save back portable profile:', err);
+                }
+            }
 
             if (anonymizedProxyUrl) {
                 try {
@@ -439,375 +827,45 @@ class BrowserManager {
             console.log(`[Sync] Finished upload for ${account.name}`);
         });
 
-        // Continue with setup
-        try {
-            console.log('[BrowserManager] Setup Continuing (EvasionPage)...');
-            BrowserManager.lastPage = evasionPage; // Track for Element Picker
 
-            // ===================================================================
-            // MANUAL STEALTH INJECTION (Replaces Stealth Plugin)
-            // ===================================================================
-            // ===================================================================
-            // MANUAL STEALTH INJECTION (Level 3 - Robust)
-            // ===================================================================
-            await evasionPage.evaluateOnNewDocument((runInfo) => {
-                // 1. Hide navigator.webdriver (Standard)
-                Object.defineProperty(navigator, 'webdriver', { get: () => false });
+        return browser;
+    }
 
-                // 2. Mock Chrome Runtime (Critical for IPHey)
-                if (!window.chrome) window.chrome = {};
-                if (!window.chrome.runtime) window.chrome.runtime = {};
-
-                // 3. Mock Plugins & MimeTypes (Linked)
-                const mockPlugins = [
-                    { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-                    { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
-                    { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
-                ];
-
-                Object.defineProperty(navigator, 'plugins', {
-                    get: () => {
-                        const p = [...mockPlugins];
-                        p.item = (i) => p[i];
-                        p.namedItem = (name) => p.find(x => x.name === name);
-                        p.refresh = () => { };
-                        return p;
-                    }
-                });
-
-                Object.defineProperty(navigator, 'mimeTypes', {
-                    get: () => {
-                        const m = [
-                            { type: 'application/pdf', suffixes: 'pdf', description: '', enabledPlugin: mockPlugins[0] },
-                            { type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: mockPlugins[1] }
-                        ];
-                        m.item = (i) => m[i];
-                        m.namedItem = (type) => m.find(x => x.type === type);
-                        return m;
-                    }
-                });
-
-                // 4. Mock Languages
-                Object.defineProperty(navigator, 'languages', {
-                    get: () => ['en-US', 'en'],
-                });
-
-                // 5. Polyfill Notification (Fixes ReferenceError)
-                if (!window.Notification) {
-                    window.Notification = {
-                        permission: 'default',
-                        requestPermission: () => Promise.resolve('default')
-                    };
-                }
-
-                // 6. Pass Permissions Check (Safe Fallback)
-                if (window.navigator.permissions) {
-                    const originalQuery = window.navigator.permissions.query;
-                    window.navigator.permissions.query = (parameters) => {
-                        if (parameters.name === 'notifications') {
-                            return Promise.resolve({ state: window.Notification.permission });
-                        }
-                        return originalQuery(parameters);
-                    };
-                }
-
-                // 7. UA Client Hints (CRITICAL for Google Login)
-                if (navigator.userAgentData) {
-                    const majorVersion = "131";
-                    const fullVersion = "131.0.0.0";
-                    const brands = [
-                        { brand: "Chromium", version: majorVersion },
-                        { brand: "Google Chrome", version: majorVersion },
-                        { brand: "Not=A?Brand", version: "24" }
-                    ];
-
-                    Object.defineProperty(navigator, 'userAgentData', {
-                        get: () => ({
-                            brands: brands,
-                            mobile: false,
-                            platform: "Windows",
-                            getHighEntropyValues: (hints) => Promise.resolve({
-                                architecture: "x86",
-                                bitness: "64",
-                                brands: brands,
-                                mobile: false,
-                                model: "",
-                                platform: "Windows",
-                                platformVersion: "15.0.0",
-                                uaFullVersion: fullVersion
-                            }),
-                            toJSON: () => ({ brands, mobile: false, platform: "Windows" })
-                        })
-                    });
-                }
-
-                // 7. WebGL Vendor/Renderer (REMOVED to avoid "Masking Detected")
-                // We will rely on the real GPU (RTX 3060) which is better than a detected mock.
-                /*
-                const mockWebGL = (context) => {
-                    try {
-                        if (!context) return;
-                        const getParameter = context.prototype.getParameter;
-                        context.prototype.getParameter = function (parameter) {
-                            try {
-                                // 37445 = UNMASKED_VENDOR_WEBGL
-                                // 37446 = UNMASKED_RENDERER_WEBGL
-                                if (parameter === 37445) return 'Google Inc. (NVIDIA)';
-                                if (parameter === 37446) return 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)';
-                                return getParameter.apply(this, [parameter]);
-                            } catch (err) {
-                                return null; // Suppress INVALID_ENUM errors
-                            }
-                        };
-                    } catch (e) { }
-                };
- 
-                mockWebGL(window.WebGLRenderingContext);
-                mockWebGL(window.WebGL2RenderingContext);
-                */
-
-                // 8. Hardware Concurrency & Memory (REMOVED to avoid "Masking Detected")
-                // Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4 });
-                // Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
-                // Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
-
-            }, { /* Optional args */ });
-            console.log('[Evasion] ✓ Manual Stealth Scripts Injected (Level 5 - Minimal/Native Hardware)');
-
-            // Setup Supervisor (2FA & Click/Type listener)
-            // RESTORED: Now that we have manual stealth, we can try restoring this.
-            // If it hangs again, we will know for sure.
-            await this.startSupervisor(evasionPage, account);
-
-            console.log('[Evasion] ✓ Supervisor injected');
-        } catch (err) {
-            console.error('[BrowserManager] Injection error:', err);
-        }
-
-
-
-
-        // ===================================================================
-        // RESTORED CLIENT SCRIPTS (Optimized)
-        // ===================================================================
-
-        // CLIENT-SIDE SCRIPT (Injected) - Handles Username, Password, Logs
-        // ----------------------------------------------------------------
-        // Expose for In-Page script (kept for redundancy/other fields)
-        await page.exposeFunction('getTOTP', () => {
-            if (account.auth.twoFactorSecret) {
-                try { return authenticator.generate(account.auth.twoFactorSecret); } catch (e) { return null; }
-            }
-            return null;
+    static getFreePort() {
+        return new Promise((resolve, reject) => {
+            const server = net.createServer();
+            server.unref();
+            server.on('error', reject);
+            server.listen(0, () => {
+                const port = server.address().port;
+                server.close(() => resolve(port));
+            });
         });
+    }
 
-        await page.exposeFunction('has2FASecret', () => !!account.auth.twoFactorSecret);
+    static spawnBrowser(executablePath, args, cwd) {
+        return new Promise((resolve, reject) => {
+            console.log(`[BrowserManager] Spawning: ${executablePath}`);
+            console.log(`[BrowserManager] CWD: ${cwd}`);
 
-        // ----------------------------------------------------------------
-        // CLIENT-SIDE SCRIPT (Injected) - Handles Username, Password, Logs
-        // ----------------------------------------------------------------
-        try {
-            await page.evaluateOnNewDocument((auth) => {
-                // AGGRESSIVE PASSWORD MASKING ENFORCER
-                setInterval(() => {
-                    // 1. Force Input Type = Password
-                    const passInputs = document.querySelectorAll('input[type="password"], div[data-cy="signin-password-input"] input');
-                    passInputs.forEach(el => {
-                        if (el.type !== 'password') {
-                            el.type = 'password';
-                            console.log('[Enforcer] Reverted password field to secure type.');
-                        }
-                    });
-
-                    // 2. Kill Reveal Buttons (Tazapay specific & Generic)
-                    const targets = [
-                        'div[data-cy="signin-password-input"] svg',
-                        'div[data-cy="signin-password-input"] button',
-                        'div[data-cy="signin-password-input"] .ant-input-suffix', // Ant Design
-                        '.MuiInputAdornment-positionEnd', // Material UI
-                        // 'input::-ms-reveal' // Pseudo-elements can't be removed by JS, handled by CSS or just ignored as we enforce type
-                    ];
-
-                    targets.forEach(selector => {
-                        document.querySelectorAll(selector).forEach(el => {
-                            el.remove(); // DELETE FROM DOM
-                        });
-                    });
-                }, 100);
-
-                window.__loginState = { lastAction: 0 };
-                const PLATFORMS = {
-                    'tazapay': {
-                        user: ['div[data-cy="signin-email-data"] input', 'input[placeholder="Enter email address"]'],
-                        pass: ['div[data-cy="signin-password-input"] input', 'input[type="password"]'],
-                        remember: ['input[name="saveSession"]'],
-                        next: ['button[data-cy="signin-button"]'],
-                        // Note: 2FA is now handled by Node-side Supervisor for reliability
-                        twoFactor: ['input[data-cy^="authenticator-authenticate-otp-field-otp-input-"]']
-                    }
-                };
-
-                function isVisible(el) {
-                    if (!el) return false;
-                    const style = window.getComputedStyle(el);
-                    return style.display !== 'none' && style.visibility !== 'hidden' && !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
-                }
-
-                function triggerEvents(el, val) {
-                    if (!el) return;
-                    el.focus();
-                    el.value = val;
-                    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-                    if (nativeInputValueSetter) nativeInputValueSetter.call(el, val);
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
-                }
-
-                // Auto-login logic removed as per user request to focus on Workflow Automations.
-                // The previous setInterval loop (lines 301-343) has been deleted.
-            }, account.auth);
-
-            // ----------------------------------------------------------------
-            // NODE-SIDE SUPERVISOR (Specific for complex interactions like 2FA)
-            // ----------------------------------------------------------------
-            BrowserManager.startSupervisor(page, account);
-
-            // ===================================================================
-            // END RESTORE BLOCK
-            // ===================================================================
-            // ===================================================================
-            // END IPHEY DEBUG BLOCK
-            // ===================================================================
-
-
-            if (account.loginUrl) {
-                console.log(`[Browser] Navigating to ${account.loginUrl}`);
-                try {
-                    await page.goto(account.loginUrl, { waitUntil: 'load', timeout: 60000 });
-                } catch (e) { console.warn('Nav timeout, continuing...'); }
-
-                // Automation Mode Check
-                // Valid modes: 'auto' (default), 'manual'
-                // If mode arg is passed (e.g. from Open button), it overrides DB config
-                const automationMode = (mode || account.automation_mode || 'auto').toLowerCase();
-                console.log(`[BrowserManager] Automation Mode: ${automationMode}`);
-
-                if (automationMode === 'auto' && account.workflow_id) {
-                    await BrowserManager.executeWorkflow(browser, page, account.workflow_id);
-                    // If workflow completes, close browser?
-                    // Usually executeWorkflow closes it, or we close it here.
-                    // For now, let's assume we want to close after auto.
-                    try { await browser.close(); } catch (e) { }
-                } else {
-                    console.log('[BrowserManager] Manual mode or no workflow. Keeping browser open.');
-                }
-
-
-
-                // IP Check
-                try {
-                    const ip = await page.evaluate(() => fetch('https://api.ipify.org?format=json').then(r => r.json()).then(d => d.ip));
-                    console.log(`[Proxy-Check] Current Exit IP: ${ip}`);
-                } catch (e) { }
-            }
-
-            // ===================================================================
-            // HYBRID SYNC: Periodic Storage Backup (Every 30s)
-            // Moved outside loginUrl block to ensure it ALWAYS runs
-            // =================================================================== 
-            const cookieSyncInterval = setInterval(async () => {
-                try {
-                    if (browser.isConnected()) {
-                        const allPages = await browser.pages();
-                        if (allPages.length > 0) {
-                            const page = allPages[0];
-
-                            // Extract all storage data
-                            const storageInfo = await page.evaluate(() => {
-                                const localStorageData = {};
-                                for (let i = 0; i < localStorage.length; i++) {
-                                    const key = localStorage.key(i);
-                                    localStorageData[key] = localStorage.getItem(key);
-                                }
-
-                                const sessionStorageData = {};
-                                for (let i = 0; i < sessionStorage.length; i++) {
-                                    const key = sessionStorage.key(i);
-                                    sessionStorageData[key] = sessionStorage.getItem(key);
-                                }
-
-                                return {
-                                    localStorage: localStorageData,
-                                    sessionStorage: sessionStorageData
-                                };
-                            });
-
-                            // Get cookies
-                            const cookies = await page.cookies();
-
-                            // Upload everything
-                            await SyncManager.uploadStorage(account.id, {
-                                cookies,
-                                localStorage: storageInfo.localStorage,
-                                sessionStorage: storageInfo.sessionStorage
-                            });
-
-                            console.log(`[Sync] ✓ Periodic backup: ${cookies.length} cookies, ${Object.keys(storageInfo.localStorage).length} localStorage, ${Object.keys(storageInfo.sessionStorage).length} sessionStorage`);
-                        }
-                    } else {
-                        clearInterval(cookieSyncInterval);
-                    }
-                } catch (e) {
-                    console.error('[Sync] Periodic backup error:', e.message);
-                }
-            }, 30000); // Every 30 seconds
-
-            // Also sync on navigation completion
-            page.on('load', async () => {
-                try {
-                    // Extract all storage data
-                    const storageInfo = await page.evaluate(() => {
-                        const localStorageData = {};
-                        for (let i = 0; i < localStorage.length; i++) {
-                            const key = localStorage.key(i);
-                            localStorageData[key] = localStorage.getItem(key);
-                        }
-
-                        const sessionStorageData = {};
-                        for (let i = 0; i < sessionStorage.length; i++) {
-                            const key = sessionStorage.key(i);
-                            sessionStorageData[key] = sessionStorage.getItem(key);
-                        }
-
-                        return {
-                            localStorage: localStorageData,
-                            sessionStorage: sessionStorageData
-                        };
-                    });
-
-                    const cookies = await page.cookies();
-
-                    await SyncManager.uploadStorage(account.id, {
-                        cookies,
-                        localStorage: storageInfo.localStorage,
-                        sessionStorage: storageInfo.sessionStorage
-                    });
-
-                    console.log(`[Sync] ✓ Page load backup: ${cookies.length} cookies, ${Object.keys(storageInfo.localStorage).length} localStorage, ${Object.keys(storageInfo.sessionStorage).length} sessionStorage`);
-                } catch (e) {
-                    console.error('[Sync] Page load sync error:', e.message);
-                }
+            const child = spawn(executablePath, args, {
+                cwd: cwd,
+                detached: true,
+                windowsHide: true, // Hide the command line window
+                stdio: ['ignore', 'ignore', 'ignore']
             });
 
-            // Store browser instance in map
-            BrowserManager.activeBrowsers.set(account.id, browser);
-            console.log(`[BrowserManager] ✓ Browser instance stored for account: ${account.name} `);
+            child.on('error', (err) => {
+                console.error('[BrowserManager] Spawn Error:', err);
+                reject(err);
+            });
 
-            return browser;
-        } catch (err) {
-            console.error('[BrowserManager] Fatal Launch Error:', err);
-            throw err;
-        }
+            child.unref();
+
+            setTimeout(() => {
+                resolve(child);
+            }, 1500);
+        });
     }
 
     static startElementPicker(page) {
@@ -1173,6 +1231,41 @@ class BrowserManager {
         }
 
         loop();
+    }
+
+    // HELPER: Centralized Cleanup & Sync
+    static async cleanupSession(accountId, portableProfilePath, userDataDir, proxyUrl) {
+        console.log(`[BrowserManager] Cleaning up session for ${accountId}...`);
+        BrowserManager.activeBrowsers.delete(accountId);
+
+        // SAVE BACK PORTABLE PROFILE
+        if (portableProfilePath) {
+            try {
+                console.log(`[BrowserManager] 💾 Saving Portable Profile back to ${userDataDir}...`);
+                // Use copy with overwrite. Ensure target exists.
+                await fs.ensureDir(userDataDir);
+                await fs.copy(portableProfilePath, userDataDir, { overwrite: true, errorOnExist: false });
+                console.log(`[BrowserManager] ✅ Sync Complete.`);
+            } catch (err) {
+                console.error('[BrowserManager] Failed to save back portable profile:', err);
+            }
+        }
+
+        if (proxyUrl) {
+            try {
+                await ProxyChain.closeAnonymizedProxy(proxyUrl, true);
+                console.log('[Proxy] Bridge closed.');
+            } catch (e) { console.error('[Proxy] Close error:', e); }
+        }
+
+        // [Cloud Sync] Restore Upload Logic
+        try {
+            console.log(`[BrowserManager] Uploading session for ${accountId}...`);
+            await SyncManager.uploadSession(accountId);
+            console.log(`[BrowserManager] ✅ Sync Upload Complete.`);
+        } catch (e) {
+            console.error('[BrowserManager] Sync Upload Failed:', e);
+        }
     }
 }
 
