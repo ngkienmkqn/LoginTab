@@ -1095,6 +1095,37 @@ class BrowserManager {
         }
     }
 
+    /**
+     * Force close browser by account ID
+     * Used when admin kicks a user from a profile
+     */
+    static async closeBrowserByAccountId(accountId) {
+        if (!BrowserManager.activeBrowsers.has(accountId)) {
+            console.log(`[BrowserManager] No active browser for account: ${accountId}`);
+            return false;
+        }
+
+        try {
+            const browser = BrowserManager.activeBrowsers.get(accountId);
+            console.log(`[BrowserManager] Force closing browser for kicked user: ${accountId}`);
+
+            // Close browser - this will trigger the 'disconnected' event
+            await browser.close();
+
+            // Remove from active browsers map
+            BrowserManager.activeBrowsers.delete(accountId);
+
+            console.log(`[BrowserManager] ✓ Browser closed successfully for: ${accountId}`);
+            return true;
+        } catch (err) {
+            console.error(`[BrowserManager] Error closing browser:`, err.message);
+            // Still remove from map even if close fails
+            BrowserManager.activeBrowsers.delete(accountId);
+            return false;
+        }
+    }
+
+
     static startElementPicker(page) {
         if (!page || page.isClosed()) throw new Error('Browser page is not available.');
 

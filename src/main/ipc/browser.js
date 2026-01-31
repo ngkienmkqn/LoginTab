@@ -111,7 +111,20 @@ function registerBrowserHandlers() {
         }
     });
 
+    // Force close browser locally (called by renderer when Socket.IO kick is received)
+    ipcMain.handle('force-close-local-browser', async (event, accountId) => {
+        try {
+            console.log(`[IPC] force-close-local-browser called for: ${accountId}`);
+            const browserClosed = await BrowserManager.closeBrowserByAccountId(accountId);
+            return { success: browserClosed };
+        } catch (error) {
+            console.error('[IPC] force-close-local-browser error:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
     // Kick profile user (Admin/Super Admin only)
+
     ipcMain.handle('kick-profile-user', async (event, { accountId, restrictionMinutes }) => {
         const callerId = global.currentAuthUser?.id;
         if (!callerId) throw new Error('Not authenticated');
@@ -172,8 +185,16 @@ function registerBrowserHandlers() {
                 VALUES (?, ?, ?, 'close')
             `, [accountId, kickedUserId, kickedUsername || 'kicked']);
 
-            // Notify clients
+            // FORCE CLOSE BROWSER for kicked user (Main process side)
+            const BrowserManager = require('../../managers/BrowserManager');
+            const browserClosed = await BrowserManager.closeBrowserByAccountId(accountId);
+            if (browserClosed) {
+                console.log(`[Kick] ✓ Browser forcefully closed for account: ${accountId}`);
+            }
+
+            // Notify clients (for UI update and secondary close attempts)
             const { getMainWindow } = require('../window');
+
             const mainWindow = getMainWindow();
             if (mainWindow) {
                 mainWindow.webContents.send('force-close-browser', {

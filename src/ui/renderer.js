@@ -30,6 +30,71 @@ var syncingBrowserIds = new Set();
 var profileStatusMap = {}; // Real-time status: { accountId: { userId, username } }
 var profileStatusLoaded = false; // Flag: true after first poll completes
 
+// --- Socket.IO Client for Multi-Machine Kick Support ---
+// Connect to server to receive kick notifications from admin on other machines
+var socket = null;
+try {
+    // Try to load socket.io-client (works in Electron with node integration)
+    const io = require('socket.io-client');
+    const serverUrl = 'http://localhost:3000'; // Default server URL
+    socket = io(serverUrl);
+
+    socket.on('connect', () => {
+        console.log('[Socket.IO] Connected to server for kick notifications');
+    });
+
+    socket.on('force-close-browser', async (data) => {
+        console.log('[Socket.IO] Received force-close-browser:', data);
+
+        // Check if the current user is the one being kicked
+        const currentUserId = global.currentAuthUser?.id || window.currentUserId;
+
+        if (data.kickedUserId === currentUserId) {
+            console.log('[Socket.IO] Force closing browser - kicked by admin');
+
+            // Close local browser via IPC (if in Electron)
+            if (typeof ipcRenderer !== 'undefined') {
+                try {
+                    // Tell main process to close the browser
+                    await ipcRenderer.invoke('force-close-local-browser', data.accountId);
+                } catch (e) {
+                    console.error('[Socket.IO] Failed to close browser via IPC:', e);
+                }
+            }
+
+            // Update UI state
+            openBrowserIds.delete(data.accountId);
+            if (typeof updateProfileButtonState === 'function') {
+                updateProfileButtonState(data.accountId, 'closed');
+            }
+
+            // Show notification
+            let msg = `🔒 Bạn đã bị ${data.kickedBy} kick khỏi profile.`;
+            if (data.restrictionMinutes === -1) {
+                msg += ' Quyền truy cập đã bị thu hồi.';
+            } else if (data.restrictionMinutes > 0) {
+                msg += ` Hạn chế ${data.restrictionMinutes} phút.`;
+            }
+
+            if (typeof showToast === 'function') {
+                showToast(msg, 'warning', 10000);
+            }
+
+            // Refresh data
+            if (typeof loadAllData === 'function') {
+                loadAllData();
+            }
+        }
+    });
+
+    socket.on('disconnect', () => {
+        console.log('[Socket.IO] Disconnected from server');
+    });
+} catch (e) {
+    console.log('[Socket.IO] Not available (running in non-server mode):', e.message);
+}
+
+
 // --- Anti-Duplicate Click Protection ---
 var pendingActions = new Set(); // Track actions currently in progress
 
@@ -1242,22 +1307,44 @@ async function kickProfileUser() {
 
     const restriction = parseInt(document.getElementById('kickRestriction').value);
 
-    const res = await ipcRenderer.invoke('kick-profile-user', {
-        accountId: kickTargetAccountId,
-        restrictionMinutes: restriction
-    });
+    try {
+        // Use REST API for multi-machine support (server.js handles Socket.IO broadcast)
+        let res;
+        if (typeof ipcRenderer !== 'undefined' && ipcRenderer.invoke) {
+            // Electron mode - use IPC
+            res = await ipcRenderer.invoke('kick-profile-user', {
+                accountId: kickTargetAccountId,
+                restrictionMinutes: restriction
+            });
+        } else {
+            // Web/Server mode - use REST API
+            const response = await fetch('/api/browser/kick', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    accountId: kickTargetAccountId,
+                    restrictionMinutes: restriction
+                })
+            });
+            res = await response.json();
+        }
 
-    if (res.success) {
-        showToast(res.message, 'success', 3000);
-        closeModal('kickModal');
-        loadAllData();
-    } else {
-        alert('Kick failed: ' + res.error);
+        if (res.success) {
+            showToast(res.message, 'success', 3000);
+            closeModal('kickModal');
+            loadAllData();
+        } else {
+            alert('Kick failed: ' + res.error);
+        }
+    } catch (err) {
+        console.error('[Kick] Error:', err);
+        alert('Kick failed: ' + err.message);
     }
 
     kickTargetAccountId = null;
     kickTargetUsername = null;
 }
+
 
 function launch(id) {
     // Check if already launching or running

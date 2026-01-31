@@ -38,6 +38,7 @@
         "rebrowser-patches": "^1.0.19",
         "selenium-webdriver": "^4.40.0",
         "socket.io": "^4.7.4",
+        "socket.io-client": "^4.8.3",
         "speakeasy": "^2.0.0",
         "undetected-chromedriver": "^0.0.1-security",
         "uuid": "^9.0.1",

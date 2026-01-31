@@ -301,6 +301,110 @@ app.post('/api/browser/launch', requireAuth, async (req, res) => {
     }
 });
 
+// --- KICK PROFILE USER (Multi-machine support) ---
+app.post('/api/browser/kick', requireAuth, async (req, res) => {
+    const { accountId, restrictionMinutes } = req.body;
+    const callerId = req.user.id;
+
+    try {
+        const pool = await getPool();
+
+        // Check caller permissions
+        const [callers] = await pool.query('SELECT * FROM users WHERE id = ?', [callerId]);
+        if (callers.length === 0) throw new Error('User not found');
+        const caller = callers[0];
+
+        if (caller.role !== 'admin' && caller.role !== 'super_admin') {
+            throw new Error('Permission denied: Only admin/super_admin can kick users');
+        }
+
+        // Get account info
+        const [accounts] = await pool.query('SELECT * FROM accounts WHERE id = ?', [accountId]);
+        if (accounts.length === 0) throw new Error('Account not found');
+        const account = accounts[0];
+
+        // Find who to kick
+        const [latestLogs] = await pool.query(`
+            SELECT user_id, username, action FROM profile_usage_log 
+            WHERE account_id = ? 
+            ORDER BY timestamp DESC LIMIT 1
+        `, [accountId]);
+
+        let kickedUserId = account.currently_used_by_user_id;
+        let kickedUsername = account.currently_used_by_name;
+
+        if (!kickedUserId && latestLogs.length > 0 && latestLogs[0].action === 'open') {
+            kickedUserId = latestLogs[0].user_id;
+            kickedUsername = latestLogs[0].username;
+        }
+
+        if (!kickedUserId) {
+            return res.json({ success: false, error: 'Profile is not currently in use' });
+        }
+
+        // Handle restriction
+        let restrictedUntil = null;
+        if (restrictionMinutes === -1) {
+            await pool.query('DELETE FROM account_assignments WHERE account_id = ? AND user_id = ?', [accountId, kickedUserId]);
+            console.log(`[Kick] Removed assignment for user ${kickedUserId} from account ${accountId}`);
+        } else if (restrictionMinutes > 0) {
+            restrictedUntil = new Date(Date.now() + restrictionMinutes * 60000);
+        }
+
+        // Update database
+        await pool.query(`
+            UPDATE accounts SET 
+                usage_restricted_until = ?,
+                restricted_by_user_id = ?,
+                restricted_for_user_id = ?,
+                currently_used_by_user_id = NULL,
+                currently_used_by_name = NULL
+            WHERE id = ?
+        `, [restrictedUntil, restrictionMinutes > 0 ? callerId : null, restrictionMinutes > 0 ? kickedUserId : null, accountId]);
+
+        // Log close action
+        await pool.query(`
+            INSERT INTO profile_usage_log (account_id, user_id, username, action) 
+            VALUES (?, ?, ?, 'close')
+        `, [accountId, kickedUserId, kickedUsername || 'kicked']);
+
+        // Force close browser on THIS server (if running locally)
+        const browserClosed = await BrowserManager.closeBrowserByAccountId(accountId);
+        if (browserClosed) {
+            console.log(`[Kick] ✓ Browser forcefully closed for account: ${accountId}`);
+        }
+
+        // BROADCAST to ALL connected clients via Socket.IO
+        // This notifies staff on OTHER machines to close their browser
+        io.emit('force-close-browser', {
+            accountId,
+            kickedUserId,
+            kickedUsername,
+            restrictionMinutes,
+            kickedBy: caller.username
+        });
+        console.log(`[Kick] Socket.IO broadcast sent to all clients`);
+
+        // Audit log
+        await auditLog('kick_profile_user', callerId, {
+            accountId,
+            kickedUserId,
+            kickedUsername,
+            restrictionMinutes
+        });
+
+        console.log(`[Kick] ${caller.username} kicked ${kickedUsername} from ${accountId} (Restriction: ${restrictionMinutes}min)`);
+
+        res.json({
+            success: true,
+            message: `Đã kick ${kickedUsername}${restrictionMinutes > 0 ? ` (hạn chế ${restrictionMinutes} phút)` : restrictionMinutes === -1 ? ' (thu hồi quyền)' : ''}`
+        });
+    } catch (error) {
+        console.error('Kick failed:', error);
+        res.json({ success: false, error: error.message });
+    }
+});
+
 // --- PROXIES ---
 app.get('/api/proxies', requireAuth, async (req, res) => {
     try {
