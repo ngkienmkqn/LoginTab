@@ -31,6 +31,11 @@ function initIpcListeners() {
         console.log('[UI] Browser opened:', data.accountName);
         openBrowserIds.add(data.accountId);
 
+        // Register for kick detection polling
+        if (typeof registerMyOpenBrowser === 'function') {
+            registerMyOpenBrowser(data.accountId);
+        }
+
         if (typeof updateProfileButtonState === 'function') {
             updateProfileButtonState(data.accountId, 'open');
         }
@@ -54,6 +59,11 @@ function initIpcListeners() {
         console.log('[UI] Browser closed:', data.accountName);
         openBrowserIds.delete(data.accountId);
         syncingBrowserIds.delete(data.accountId);
+
+        // Unregister from kick detection
+        if (typeof unregisterMyOpenBrowser === 'function') {
+            unregisterMyOpenBrowser(data.accountId);
+        }
 
         if (typeof updateProfileButtonState === 'function') {
             updateProfileButtonState(data.accountId, 'closed');

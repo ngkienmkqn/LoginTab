@@ -113,18 +113,75 @@ async function withDebounce(actionKey, fn) {
 }
 
 // --- Profile Status Polling (Real-time across users) ---
+// Also detects when current user is kicked from a profile they're using
 async function pollProfileStatus() {
     try {
         const result = await ipcRenderer.invoke('get-profile-status');
         if (result.success) {
+            const previousStatusMap = { ...profileStatusMap };
             profileStatusMap = result.status;
-            profileStatusLoaded = true; // Mark as loaded after first successful poll
+            profileStatusLoaded = true;
             updateProfileStatusBadges();
+
+            // KICK DETECTION: Check if any browser I'm using was kicked
+            await detectKickAndCloseBrowser(previousStatusMap, profileStatusMap);
         }
     } catch (err) {
         console.error('[Status] Polling error:', err.message);
     }
 }
+
+// Track which browsers current user has open locally
+var myOpenBrowserAccountIds = new Set();
+
+// Detect if current user was kicked and close browser
+async function detectKickAndCloseBrowser(previousStatus, currentStatus) {
+    const currentUserId = currentUser?.id;
+    if (!currentUserId) return;
+
+    // Check each account ID that was previously "in use by me"
+    for (const accountId of myOpenBrowserAccountIds) {
+        const wasMyProfile = previousStatus[accountId]?.userId === currentUserId ||
+            openBrowserIds.has(accountId);
+        const isStillMyProfile = currentStatus[accountId]?.userId === currentUserId;
+
+        // If I was using it but now I'm not (kicked!)
+        if (wasMyProfile && !isStillMyProfile) {
+            console.log(`[Kick Detection] Detected kick from profile: ${accountId}`);
+
+            // Force close the browser via IPC
+            try {
+                await ipcRenderer.invoke('force-close-local-browser', accountId);
+                console.log(`[Kick Detection] Browser closed for: ${accountId}`);
+            } catch (e) {
+                console.error('[Kick Detection] Failed to close browser:', e);
+            }
+
+            // Update UI state
+            openBrowserIds.delete(accountId);
+            myOpenBrowserAccountIds.delete(accountId);
+            if (typeof updateProfileButtonState === 'function') {
+                updateProfileButtonState(accountId, 'closed');
+            }
+
+            // Show notification
+            showToast('🔒 Bạn đã bị kick khỏi profile bởi Admin!', 'warning', 10000);
+        }
+    }
+}
+
+// Register when user opens a browser (call this from launch function)
+function registerMyOpenBrowser(accountId) {
+    myOpenBrowserAccountIds.add(accountId);
+    console.log('[Kick Detection] Registered open browser:', accountId);
+}
+
+// Unregister when browser is closed normally
+function unregisterMyOpenBrowser(accountId) {
+    myOpenBrowserAccountIds.delete(accountId);
+    console.log('[Kick Detection] Unregistered browser:', accountId);
+}
+
 
 function updateProfileStatusBadges() {
     const currentUserId = currentUser?.id;
