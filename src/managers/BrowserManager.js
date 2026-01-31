@@ -1490,6 +1490,48 @@ class BrowserManager {
 
         loop();
     }
+
+    /**
+     * Force close browser by account ID (for kick functionality)
+     * @param {string} accountId - The account ID whose browser should be closed
+     * @returns {boolean} - Whether browser was successfully closed
+     */
+    static async closeBrowserByAccountId(accountId) {
+        console.log(`[BrowserManager] closeBrowserByAccountId called for: ${accountId}`);
+
+        if (!BrowserManager.activeBrowsers.has(accountId)) {
+            console.log(`[BrowserManager] No active browser found for account: ${accountId}`);
+            return false;
+        }
+
+        try {
+            const browser = BrowserManager.activeBrowsers.get(accountId);
+            console.log(`[BrowserManager] Force closing browser for kicked user: ${accountId}`);
+
+            // Close the browser
+            await browser.close();
+
+            // Remove from tracking
+            BrowserManager.activeBrowsers.delete(accountId);
+
+            console.log(`[BrowserManager] ✓ Browser closed successfully for: ${accountId}`);
+
+            // Send event to UI
+            sendToUI('browser-closed', {
+                accountId,
+                accountName: 'Profile',
+                reason: 'kicked'
+            });
+
+            return true;
+        } catch (err) {
+            console.error(`[BrowserManager] Error closing browser for ${accountId}:`, err.message);
+            // Clean up map even if close fails
+            BrowserManager.activeBrowsers.delete(accountId);
+            return false;
+        }
+    }
 }
 
 module.exports = BrowserManager;
+
