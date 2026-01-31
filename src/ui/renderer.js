@@ -135,24 +135,29 @@ async function pollProfileStatus() {
 var myOpenBrowserAccountIds = new Set();
 
 // Detect if current user was kicked and close browser
+// SIMPLIFIED: If I have browser open but DB shows no one is using it → I was kicked
 async function detectKickAndCloseBrowser(previousStatus, currentStatus) {
     const currentUserId = currentUser?.id;
     if (!currentUserId) return;
 
-    // Check each account ID that was previously "in use by me"
-    for (const accountId of myOpenBrowserAccountIds) {
-        const wasMyProfile = previousStatus[accountId]?.userId === currentUserId ||
-            openBrowserIds.has(accountId);
-        const isStillMyProfile = currentStatus[accountId]?.userId === currentUserId;
+    console.log(`[Kick Detection] Checking ${myOpenBrowserAccountIds.size} open browsers...`);
 
-        // If I was using it but now I'm not (kicked!)
-        if (wasMyProfile && !isStillMyProfile) {
-            console.log(`[Kick Detection] Detected kick from profile: ${accountId}`);
+    // Check each account ID that I have open locally
+    for (const accountId of myOpenBrowserAccountIds) {
+        const dbShowsInUse = currentStatus[accountId]; // Is someone using it according to DB?
+        const dbShowsMyUsage = currentStatus[accountId]?.userId == currentUserId; // Using == for type coercion
+
+        console.log(`[Kick Detection] Account ${accountId}: dbInUse=${!!dbShowsInUse}, dbShowsMe=${dbShowsMyUsage}`);
+
+        // If I have browser open BUT database says no one is using it (or someone else is)
+        // → I was kicked!
+        if (!dbShowsMyUsage) {
+            console.log(`[Kick Detection] ⚠ KICKED! Closing browser for: ${accountId}`);
 
             // Force close the browser via IPC
             try {
-                await ipcRenderer.invoke('force-close-local-browser', accountId);
-                console.log(`[Kick Detection] Browser closed for: ${accountId}`);
+                const result = await ipcRenderer.invoke('force-close-local-browser', accountId);
+                console.log(`[Kick Detection] Browser close result:`, result);
             } catch (e) {
                 console.error('[Kick Detection] Failed to close browser:', e);
             }
@@ -165,7 +170,7 @@ async function detectKickAndCloseBrowser(previousStatus, currentStatus) {
             }
 
             // Show notification
-            showToast('🔒 Bạn đã bị kick khỏi profile bởi Admin!', 'warning', 10000);
+            showToast('🔒 Bạn đã bị kick khỏi profile bởi Admin! Browser đã được đóng.', 'warning', 10000);
         }
     }
 }
