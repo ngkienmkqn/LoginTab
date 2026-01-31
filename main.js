@@ -636,8 +636,8 @@ ipcMain.handle('create-account', async (event, { name, loginUrl, proxy, fingerpr
             };
 
             await pool.query(
-                'INSERT INTO accounts (id, name, loginUrl, proxy_config, auth_config, fingerprint_config, extensions_path, lastActive, notes, platform_id, workflow_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                [id, newAccount.name, newAccount.loginUrl, newAccount.proxy_config, newAccount.auth_config, newAccount.fingerprint_config, newAccount.extensions_path, newAccount.lastActive, newAccount.notes, newAccount.platform_id, newAccount.workflow_id]
+                'INSERT INTO accounts (id, name, loginUrl, proxy_config, auth_config, fingerprint_config, extensions_path, lastActive, notes, platform_id, workflow_id, created_by_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [id, newAccount.name, newAccount.loginUrl, newAccount.proxy_config, newAccount.auth_config, newAccount.fingerprint_config, newAccount.extensions_path, newAccount.lastActive, newAccount.notes, newAccount.platform_id, newAccount.workflow_id, global.currentAuthUser?.id || null]
             );
 
             // Auto-assign to creator (Fix for Admin ownership)
@@ -1010,13 +1010,13 @@ ipcMain.handle('delete-account', async (event, accountId) => {
                 throw new Error('Access denied: Account not assigned to you');
             }
         } else if (caller.role === 'admin') {
-            // Admin can only delete accounts assigned to managed staff OR assigned to self
+            // Admin can delete accounts: assigned to managed staff, assigned to self, OR created by self
             const [accounts] = await pool.query(
                 `SELECT a.* FROM accounts a
-                 JOIN account_assignments aa ON a.id = aa.account_id
+                 LEFT JOIN account_assignments aa ON a.id = aa.account_id
                  LEFT JOIN users u ON aa.user_id = u.id
-                 WHERE a.id = ? AND (u.managed_by_admin_id = ? OR aa.user_id = ?)`,
-                [accountId, callerId, callerId]
+                 WHERE a.id = ? AND (u.managed_by_admin_id = ? OR aa.user_id = ? OR a.created_by_user_id = ?)`,
+                [accountId, callerId, callerId, callerId]
             );
             if (accounts.length === 0) {
                 throw new Error('Access denied: Account out of scope');

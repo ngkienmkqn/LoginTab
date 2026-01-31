@@ -29,6 +29,23 @@ var openBrowserIds = new Set();
 var syncingBrowserIds = new Set();
 var profileStatusMap = {}; // Real-time status: { accountId: { userId, username } }
 
+// --- Anti-Duplicate Click Protection ---
+var pendingActions = new Set(); // Track actions currently in progress
+
+// Wrapper to prevent duplicate button clicks
+async function withDebounce(actionKey, fn) {
+    if (pendingActions.has(actionKey)) {
+        console.log(`[Debounce] Action "${actionKey}" already in progress, ignoring.`);
+        return null;
+    }
+    pendingActions.add(actionKey);
+    try {
+        return await fn();
+    } finally {
+        pendingActions.delete(actionKey);
+    }
+}
+
 // --- Profile Status Polling (Real-time across users) ---
 async function pollProfileStatus() {
     try {
@@ -989,102 +1006,104 @@ function getRandomGPU() {
 
 // PROFILE
 async function saveProfile() {
-    const name = document.getElementById('inpName').value;
-    const loginUrl = document.getElementById('inpUrl').value;
-    if (!name) return alert('Name Required');
+    return withDebounce('saveProfile', async () => {
+        const name = document.getElementById('inpName').value;
+        const loginUrl = document.getElementById('inpUrl').value;
+        if (!name) return alert('Name Required');
 
-    // Proxy Resolve
-    let proxy = null;
-    const proxyChoice = document.getElementById('selProxy').value;
-    if (proxyChoice === 'manual') {
-        const host = document.getElementById('inpProxyHost').value;
-        const port = document.getElementById('inpProxyPort').value;
-        const type = document.getElementById('inpProxyType').value;
-        if (host && port) {
-            proxy = {
-                type,
-                host, port,
-                user: document.getElementById('inpProxyUser').value,
-                pass: document.getElementById('inpProxyPass').value
-            };
+        // Proxy Resolve
+        let proxy = null;
+        const proxyChoice = document.getElementById('selProxy').value;
+        if (proxyChoice === 'manual') {
+            const host = document.getElementById('inpProxyHost').value;
+            const port = document.getElementById('inpProxyPort').value;
+            const type = document.getElementById('inpProxyType').value;
+            if (host && port) {
+                proxy = {
+                    type,
+                    host, port,
+                    user: document.getElementById('inpProxyUser').value,
+                    pass: document.getElementById('inpProxyPass').value
+                };
+            }
+        } else if (proxyChoice !== 'none') {
+            const p = proxies.find(x => x.id === proxyChoice);
+            if (p) {
+                proxy = {
+                    type: p.type || 'http', // Copy type from pool
+                    host: p.host,
+                    port: p.port,
+                    user: p.user,
+                    pass: p.pass
+                };
+            }
         }
-    } else if (proxyChoice !== 'none') {
-        const p = proxies.find(x => x.id === proxyChoice);
-        if (p) {
-            proxy = {
-                type: p.type || 'http', // Copy type from pool
-                host: p.host,
-                port: p.port,
-                user: p.user,
-                pass: p.pass
-            };
+
+        // Extension Resolve
+        let extPath = '';
+        const extChoice = document.getElementById('selExt').value;
+        if (extChoice === 'manual') {
+            extPath = document.getElementById('inpExtPath').value;
+        } else if (extChoice !== 'none') {
+            const e = extensions.find(x => x.id === extChoice);
+            if (e) extPath = e.path;
         }
-    }
 
-    // Extension Resolve
-    let extPath = '';
-    const extChoice = document.getElementById('selExt').value;
-    if (extChoice === 'manual') {
-        extPath = document.getElementById('inpExtPath').value;
-    } else if (extChoice !== 'none') {
-        const e = extensions.find(x => x.id === extChoice);
-        if (e) extPath = e.path;
-    }
+        // FINGERPRINT GENERATION
+        let fingerprint = {
+            userAgent: document.getElementById('inpUA').value,
+            resolution: document.getElementById('inpRes').value
+        };
 
-    // FINGERPRINT GENERATION
-    let fingerprint = {
-        userAgent: document.getElementById('inpUA').value,
-        resolution: document.getElementById('inpRes').value
-    };
-
-    // If updating, preserve existing seeds/hardware
-    if (editingAccountId) {
-        const acc = accounts.find(a => a.id === editingAccountId);
-        if (acc && acc.fingerprint) {
-            // Merge existing keys
-            fingerprint = { ...acc.fingerprint, ...fingerprint };
+        // If updating, preserve existing seeds/hardware
+        if (editingAccountId) {
+            const acc = accounts.find(a => a.id === editingAccountId);
+            if (acc && acc.fingerprint) {
+                // Merge existing keys
+                fingerprint = { ...acc.fingerprint, ...fingerprint };
+            }
         }
-    }
 
-    // Fill missing hardware info (Consistent Generation)
-    if (!fingerprint.deviceMemory) fingerprint.deviceMemory = [4, 8, 16, 32][Math.floor(Math.random() * 4)];
-    if (!fingerprint.hardwareConcurrency) fingerprint.hardwareConcurrency = [4, 8, 12, 16, 24][Math.floor(Math.random() * 5)];
-    if (!fingerprint.webglRenderer) fingerprint.webglRenderer = getRandomGPU();
-    if (!fingerprint.webglVendor) fingerprint.webglVendor = "Google Inc. (NVIDIA)";
+        // Fill missing hardware info (Consistent Generation)
+        if (!fingerprint.deviceMemory) fingerprint.deviceMemory = [4, 8, 16, 32][Math.floor(Math.random() * 4)];
+        if (!fingerprint.hardwareConcurrency) fingerprint.hardwareConcurrency = [4, 8, 12, 16, 24][Math.floor(Math.random() * 5)];
+        if (!fingerprint.webglRenderer) fingerprint.webglRenderer = getRandomGPU();
+        if (!fingerprint.webglVendor) fingerprint.webglVendor = "Google Inc. (NVIDIA)";
 
-    // (Optional) Seeds for future robust noise injection
-    // if (!fingerprint.canvasSeed) fingerprint.canvasSeed = Math.floor(Math.random() * 1000000);
+        // (Optional) Seeds for future robust noise injection
+        // if (!fingerprint.canvasSeed) fingerprint.canvasSeed = Math.floor(Math.random() * 1000000);
 
-    const payload = {
-        name,
-        loginUrl,
-        extensionsPath: extPath,
-        proxy,
-        auth: {
-            username: document.getElementById('inpAuthUser').value,
-            password: document.getElementById('inpAuthPass').value,
-            twoFactorSecret: document.getElementById('inpAuth2FA').value
-        },
-        fingerprint,
-        notes: document.getElementById('inpNotes').value,
-        platformId: document.getElementById('selPlatform').value,
-        workflowId: document.getElementById('selWorkflow')?.value || null
-    };
+        const payload = {
+            name,
+            loginUrl,
+            extensionsPath: extPath,
+            proxy,
+            auth: {
+                username: document.getElementById('inpAuthUser').value,
+                password: document.getElementById('inpAuthPass').value,
+                twoFactorSecret: document.getElementById('inpAuth2FA').value
+            },
+            fingerprint,
+            notes: document.getElementById('inpNotes').value,
+            platformId: document.getElementById('selPlatform').value,
+            workflowId: document.getElementById('selWorkflow')?.value || null
+        };
 
-    let res;
-    if (editingAccountId) {
-        payload.id = editingAccountId;
-        res = await ipcRenderer.invoke('update-account', payload);
-    } else {
-        res = await ipcRenderer.invoke('create-account', payload);
-    }
+        let res;
+        if (editingAccountId) {
+            payload.id = editingAccountId;
+            res = await ipcRenderer.invoke('update-account', payload);
+        } else {
+            res = await ipcRenderer.invoke('create-account', payload);
+        }
 
-    if (res.success) {
-        closeModal('profileModal');
-        loadAllData();
-    } else {
-        alert('Error: ' + res.error);
-    }
+        if (res.success) {
+            closeModal('profileModal');
+            loadAllData();
+        } else {
+            alert('Error: ' + res.error);
+        }
+    }); // End withDebounce
 }
 
 async function remove(id, name) {

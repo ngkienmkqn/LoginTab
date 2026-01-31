@@ -372,6 +372,17 @@ async function initDB() {
             console.error('[MySQL] Migration error (profile_usage_log):', err.message);
         }
 
+        // Migration: Add created_by_user_id column to accounts (for admin delete permission)
+        try {
+            const [cols] = await connection.query("SHOW COLUMNS FROM accounts LIKE 'created_by_user_id'");
+            if (cols.length === 0) {
+                await connection.query("ALTER TABLE accounts ADD COLUMN created_by_user_id VARCHAR(36) DEFAULT NULL");
+                console.log('[MySQL] Added created_by_user_id column to accounts table');
+            }
+        } catch (err) {
+            if (err.code !== 'ER_DUP_FIELDNAME') console.error('[MySQL] Migration error (created_by_user_id):', err.message);
+        }
+
         // Seed Default Admin (Safe Insert)
         await connection.query("INSERT IGNORE INTO users (id, username, password, role) VALUES ('admin-id', 'admin', 'admin', 'super_admin')");
         console.log('[MySQL] Admin checked/seeded.');
