@@ -357,6 +357,11 @@ ipcRenderer.on('browser-loading-progress', (event, data) => {
 ipcRenderer.on('browser-opened', (event, data) => {
     console.log('[UI] Browser opened:', data.accountName);
     openBrowserIds.add(data.accountId);
+
+    // CRITICAL: Register for kick detection
+    registerMyOpenBrowser(data.accountId);
+    console.log('[Kick Detection] Registered browser:', data.accountId, '- Total open:', myOpenBrowserAccountIds.size);
+
     updateProfileButtonState(data.accountId, 'running');
 });
 
@@ -370,6 +375,11 @@ ipcRenderer.on('browser-closed', (event, data) => {
     console.log('[UI] Browser closed:', data.accountName);
     openBrowserIds.delete(data.accountId);
     syncingBrowserIds.delete(data.accountId);
+
+    // CRITICAL: Unregister from kick detection
+    unregisterMyOpenBrowser(data.accountId);
+    console.log('[Kick Detection] Unregistered browser:', data.accountId, '- Total open:', myOpenBrowserAccountIds.size);
+
     updateProfileButtonState(data.accountId, 'closed');
 
     // Remove sync toast and show success
