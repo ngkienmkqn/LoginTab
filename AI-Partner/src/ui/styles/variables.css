@@ -1,0 +1,54 @@
+/**
+ * Variables & Theme CSS
+ * Login Tab - Extracted from index.html
+ */
+
+:root {
+    /* Dark Mode (Default) */
+    --bg-body: #121212;
+    --bg-sidebar: #1e1e1e;
+    --bg-panel: #2b2b2b;
+    --bg-card: #2b2b2b;
+    --bg-dark: #121212;
+    --text-main: #e0e0e0;
+    --text-muted: #a0a0a0;
+    --accent: #bb86fc;
+    --accent-hover: #9965f4;
+    --purple: #9965f4;
+    --border: #333;
+    --success: #03dac6;
+    --danger: #cf6679;
+    --bg-hover: #333;
+}
+
+.light-mode {
+    --bg-body: #f5f5f5;
+    --bg-sidebar: #ffffff;
+    --bg-panel: #ffffff;
+    --bg-card: #ffffff;
+    --bg-dark: #f5f5f5;
+    --text-main: #333333;
+    --text-muted: #666666;
+    --accent: #6200ee;
+    --accent-hover: #3700b3;
+    --border: #e0e0e0;
+    --success: #018786;
+    --danger: #b00020;
+    --bg-hover: #f0f0f0;
+}
+
+/* Base Reset */
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: 'Inter', 'Segoe UI', sans-serif;
+    background-color: var(--bg-dark);
+    color: var(--text-main);
+    height: 100vh;
+    display: flex;
+    overflow: hidden;
+}

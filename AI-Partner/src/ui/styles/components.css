@@ -1,0 +1,131 @@
+/**
+ * Components CSS - Buttons, Badges, Forms
+ * Login Tab - Extracted from index.html
+ */
+
+/* Buttons */
+.btn {
+    background-color: var(--accent);
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    font-weight: 500;
+    cursor: pointer;
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.2s;
+}
+
+.btn:hover {
+    background-color: var(--accent-hover);
+}
+
+.btn-secondary {
+    background-color: var(--bg-hover);
+    color: var(--text-main);
+}
+
+.btn-secondary:hover {
+    background-color: #475569;
+}
+
+.btn-danger {
+    background-color: transparent;
+    color: var(--danger);
+    border: 1px solid var(--border);
+}
+
+.btn-danger:hover {
+    background-color: rgba(239, 68, 68, 0.1);
+    border-color: var(--danger);
+}
+
+.btn-sm {
+    padding: 6px 12px;
+    font-size: 13px;
+}
+
+.btn-loading {
+    opacity: 0.7;
+    pointer-events: none;
+}
+
+/* Status Badges */
+.status-badge {
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+    background-color: rgba(16, 185, 129, 0.1);
+    color: var(--success);
+}
+
+.proxy-badge {
+    font-family: monospace;
+    background: #000;
+    padding: 4px 8px;
+    border-radius: 4px;
+    color: #fbbf24;
+}
+
+.code-badge {
+    font-family: monospace;
+    padding: 6px 10px;
+    background: #1e1e1e;
+    border: 1px solid #333;
+    border-radius: 4px;
+    color: #f8fafc;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.code-badge:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+/* Forms */
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.form-control {
+    width: 100%;
+    background-color: var(--bg-body);
+    border: 1px solid var(--border);
+    padding: 10px 12px;
+    border-radius: 6px;
+    color: var(--text-main);
+    font-size: 14px;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+select.form-control option {
+    background-color: var(--bg-card);
+}
+
+/* Manual Entry Toggle */
+.manual-entry {
+    display: none;
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px dashed var(--border);
+}
+
+.manual-entry.active {
+    display: block;
+}
