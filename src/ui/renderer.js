@@ -28,6 +28,7 @@ var allWorkflows = [];
 var openBrowserIds = new Set();
 var syncingBrowserIds = new Set();
 var profileStatusMap = {}; // Real-time status: { accountId: { userId, username } }
+var profileStatusLoaded = false; // Flag: true after first poll completes
 
 // --- Anti-Duplicate Click Protection ---
 var pendingActions = new Set(); // Track actions currently in progress
@@ -52,6 +53,7 @@ async function pollProfileStatus() {
         const result = await ipcRenderer.invoke('get-profile-status');
         if (result.success) {
             profileStatusMap = result.status;
+            profileStatusLoaded = true; // Mark as loaded after first successful poll
             updateProfileStatusBadges();
         }
     } catch (err) {
@@ -60,18 +62,63 @@ async function pollProfileStatus() {
 }
 
 function updateProfileStatusBadges() {
+    const currentUserId = currentUser?.id;
+    const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
+
     // Update all profile rows with current usage status
     document.querySelectorAll('tr[data-id]').forEach(row => {
         const accountId = row.getAttribute('data-id');
         const statusCell = row.querySelector('.profile-status-badge');
+        const openBtn = row.querySelector('.open-btn');
+
+        // Always include History link
+        const historyLink = `<span style="color:#888;font-size:10px;cursor:pointer;margin-left:6px;" onclick="event.stopPropagation(); openUsageHistory('${accountId}')" title="View history">📜</span>`;
 
         if (profileStatusMap[accountId]) {
             const user = profileStatusMap[accountId];
+            const isMe = String(user.userId) === String(currentUserId);
+
             if (statusCell) {
-                statusCell.innerHTML = `<span class="in-use-badge" title="Click to view history" onclick="openUsageHistory('${accountId}')" style="cursor:pointer;background:#8b5cf6;color:white;padding:2px 8px;border-radius:4px;font-size:11px;">🟣 ${user.username}</span>`;
+                if (isMe) {
+                    statusCell.innerHTML = `<span style="color:#22c55e;font-size:11px;font-weight:600;">🟢 You</span>${historyLink}`;
+                } else {
+                    let html = `<span style="color:#f59e0b;font-size:11px;font-weight:500;">🔒 ${user.username}</span>`;
+                    if (isAdmin) {
+                        html += ` <button class="btn btn-danger" style="padding:2px 6px;font-size:10px;" onclick="event.stopPropagation(); openKickModal('${accountId}', '${user.username.replace(/'/g, "\\'")}')" title="Kick ${user.username}"><i class="fa-solid fa-user-slash"></i></button>`;
+                    }
+                    html += historyLink;
+                    statusCell.innerHTML = html;
+                }
             }
-        } else if (statusCell) {
-            statusCell.innerHTML = '<span style="color:#888;font-size:11px;">📜 History</span>'; // Show history link when not in use
+
+            // Disable Open button if in use by other
+            if (openBtn && !isMe) {
+                openBtn.disabled = true;
+                openBtn.innerHTML = '<i class="fa-solid fa-lock"></i> In Use';
+                openBtn.style.opacity = '0.5';
+                openBtn.style.cursor = 'not-allowed';
+                openBtn.style.background = '#666';
+            } else if (openBtn && isMe) {
+                // Keep enabled for self
+                openBtn.disabled = false;
+                openBtn.innerHTML = '<i class="fa-solid fa-circle" style="color:#22c55e;font-size:8px;margin-right:6px;"></i> Running';
+                openBtn.style.opacity = '1';
+                openBtn.style.cursor = 'pointer';
+                openBtn.style.background = '';
+            }
+        } else {
+            // Not in use - restore default
+            if (statusCell) {
+                statusCell.innerHTML = `<span style="color:#888;font-size:11px;cursor:pointer;" onclick="openUsageHistory('${accountId}')" title="Click to view history">📜 History</span>`;
+            }
+            // Re-enable Open button unconditionally when not in use
+            if (openBtn) {
+                openBtn.disabled = false;
+                openBtn.innerHTML = '<i class="fa-solid fa-play"></i> Open';
+                openBtn.style.opacity = '1';
+                openBtn.style.cursor = 'pointer';
+                openBtn.style.background = '';
+            }
         }
     });
 }
@@ -410,7 +457,15 @@ async function handleLogin() {
             navigate('profiles');
 
             applyPermissions();
-            loadAllData();
+
+            // Load data FIRST (buttons will show Loading state since profileStatusLoaded=false)
+            await loadAllData();
+
+            // THEN poll to get real status and update buttons
+            if (!statusPollingInterval) {
+                await pollProfileStatus(); // This sets profileStatusLoaded=true and updates buttons
+                statusPollingInterval = setInterval(pollProfileStatus, 5000);
+            }
 
             // Toggle DevTools based on Role
             console.log('User Role:', currentUser.role);
@@ -422,12 +477,6 @@ async function handleLogin() {
 
             // Start 2FA loop only after login
             setInterval(update2FACodes, 1000);
-
-            // Start profile status polling (5s) for real-time updates
-            if (!statusPollingInterval) {
-                statusPollingInterval = setInterval(pollProfileStatus, 5000);
-                pollProfileStatus(); // Immediate first poll
-            }
 
             // Start data refresh polling (30s) for Last Active updates
             setInterval(() => {
@@ -453,6 +502,14 @@ function handleLogout() {
 
     // Clear views
     document.getElementById('profileTableBody').innerHTML = '';
+
+    // Reset profile status tracking
+    profileStatusLoaded = false;
+    profileStatusMap = {};
+    if (statusPollingInterval) {
+        clearInterval(statusPollingInterval);
+        statusPollingInterval = null;
+    }
 
     // Hide all main content views to prevent glitches on re-login
     document.querySelectorAll('.view-section').forEach(el => el.style.display = 'none');
@@ -502,7 +559,14 @@ function applyPermissions() {
 }
 
 
+var isLoadingData = false; // Lock to prevent duplicate loads
+
 async function loadAllData() {
+    if (isLoadingData) {
+        console.log('[Renderer] Already loading, skipping duplicate call');
+        return;
+    }
+    isLoadingData = true;
     console.log('[Renderer] Loading all data...');
     try {
         // 1. Profiles (Critical)
@@ -567,6 +631,8 @@ async function loadAllData() {
 
     } catch (e) {
         console.error('Global Load Error:', e);
+    } finally {
+        isLoadingData = false; // Release lock
     }
 }
 
@@ -1333,12 +1399,62 @@ function renderTable() {
             `;
         }
 
-        // Action Buttons - Check if browser is already running
+        // Note: Action buttons are built after isInUseByOther is determined (below)
+        // Platform Display
+        let platformDisplay = '<span style="color:#666">--</span>';
+        if (acc.platform_id) {
+            const p = platforms.find(pl => pl.id === acc.platform_id);
+            if (p) platformDisplay = `<span style="color:#a855f7; font-weight:500">${p.name}</span>`;
+        }
+
+        // In Use Display - Show who's currently using with kick button for admin
+        let inUseDisplay = '<span style="color:#888;font-size:11px;">—</span>';
+        let isInUseByOther = false;
+        const currentUserId = currentUser?.id;
+        const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
+
+        // Check both DB column AND poll data (profileStatusMap) for current usage
+        const pollStatus = profileStatusMap[acc.id];
+        const dbUsedBy = acc.currently_used_by_user_id;
+        const usedByUserId = pollStatus?.userId || dbUsedBy;
+        const usedByName = pollStatus?.username || acc.currently_used_by_name || 'Unknown';
+
+        if (usedByUserId) {
+            // Compare as strings to handle type mismatches
+            const isMe = String(usedByUserId) === String(currentUserId);
+            console.log('[InUse]', acc.name, '| usedById:', usedByUserId, '| myId:', currentUserId, '| isMe:', isMe, '| source:', pollStatus ? 'poll' : 'db');
+
+            if (isMe) {
+                inUseDisplay = `<span style="color:#22c55e;font-weight:600;font-size:11px;">🟢 You</span>`;
+            } else {
+                isInUseByOther = true;
+                inUseDisplay = `<span style="color:#f59e0b;font-weight:500;font-size:11px;">🔒 ${usedByName}</span>`;
+                if (isAdmin) {
+                    inUseDisplay += ` <button class="btn btn-danger" style="padding:2px 6px;font-size:10px;margin-left:4px;" onclick="openKickModal('${acc.id}', '${usedByName.replace(/'/g, "\\'")}')"><i class="fa-solid fa-user-slash"></i></button>`;
+                }
+            }
+        }
+
+        // Build actions AFTER we know if in use by other
         const isRunning = openBrowserIds.has(acc.id);
-        const openBtnContent = isRunning
-            ? '<i class="fa-solid fa-circle" style="color:#22c55e;font-size:8px;margin-right:6px;"></i> Running'
-            : '<i class="fa-solid fa-play"></i> Open';
-        const openBtnDisabled = isRunning ? 'disabled style="padding:6px 12px; font-size:12px; opacity:0.7; cursor:not-allowed;"' : 'style="padding:6px 12px; font-size:12px"';
+        const isBlocked = isInUseByOther && !isAdmin; // Staff blocked if used by other
+        let openBtnContent, openBtnDisabled;
+
+        // If profile status not loaded yet, show loading state to prevent race conditions
+        console.log('[Render]', acc.name, '| profileStatusLoaded:', profileStatusLoaded, '| isInUseByOther:', isInUseByOther);
+        if (!profileStatusLoaded) {
+            openBtnContent = '<i class="fa-solid fa-spinner fa-spin"></i> Loading...';
+            openBtnDisabled = 'disabled style="padding:6px 12px; font-size:12px; opacity:0.5; cursor:wait; background:#555;"';
+        } else if (isInUseByOther) {
+            openBtnContent = '<i class="fa-solid fa-lock"></i> In Use';
+            openBtnDisabled = 'disabled style="padding:6px 12px; font-size:12px; opacity:0.5; cursor:not-allowed; background:#666;"';
+        } else if (isRunning) {
+            openBtnContent = '<i class="fa-solid fa-circle" style="color:#22c55e;font-size:8px;margin-right:6px;"></i> Running';
+            openBtnDisabled = 'disabled style="padding:6px 12px; font-size:12px; opacity:0.7; cursor:not-allowed;"';
+        } else {
+            openBtnContent = '<i class="fa-solid fa-play"></i> Open';
+            openBtnDisabled = 'style="padding:6px 12px; font-size:12px"';
+        }
 
         let actions = `
             <button class="btn open-btn" ${openBtnDisabled} onclick="this.disabled=true; this.innerHTML='<i class=\\'fa-solid fa-spinner fa-spin\\'></i> Loading...'; this.style.opacity='0.7'; launch('${acc.id}')">${openBtnContent}</button>
@@ -1352,28 +1468,18 @@ function renderTable() {
             `;
         }
 
-        // Platform Display
-        let platformDisplay = '<span style="color:#666">--</span>';
-        if (acc.platform_id) {
-            const p = platforms.find(pl => pl.id === acc.platform_id);
-            if (p) platformDisplay = `<span style="color:#a855f7; font-weight:500">${p.name}</span>`;
-        }
-
-        // In Use Display - Show who's currently using with kick button for admin
-        let inUseDisplay = '<span style="color:#888;font-size:11px;">—</span>';
-        const currentUserId = currentUser?.id;
-        const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
-
+        // Build History cell with badge showing who's using + kick button for admin
+        let historyCell = `<span style="color:#888;font-size:11px;cursor:pointer;" onclick="openUsageHistory('${acc.id}')" title="Click to view usage history">📜 History</span>`;
         if (acc.currently_used_by_user_id) {
             const usedBy = acc.currently_used_by_name || 'Unknown';
-            const isMe = acc.currently_used_by_user_id === currentUserId;
+            const isMe = String(acc.currently_used_by_user_id) === String(currentUserId);
 
             if (isMe) {
-                inUseDisplay = `<span style="color:#22c55e;font-weight:600;font-size:11px;">🟢 You</span>`;
+                historyCell = `<span style="color:#22c55e;font-size:11px;font-weight:600;">🟢 You</span>`;
             } else {
-                inUseDisplay = `<span style="color:#f59e0b;font-weight:500;font-size:11px;">🔒 ${usedBy}</span>`;
+                historyCell = `<span style="color:#f59e0b;font-size:11px;font-weight:500;">🔒 ${usedBy}</span>`;
                 if (isAdmin) {
-                    inUseDisplay += ` <button class="btn btn-danger" style="padding:2px 6px;font-size:10px;margin-left:4px;" onclick="openKickModal('${acc.id}', '${usedBy.replace(/'/g, "\\'")}')"><i class="fa-solid fa-user-slash"></i></button>`;
+                    historyCell += ` <button class="btn btn-danger" style="padding:2px 6px;font-size:10px;" onclick="event.stopPropagation(); openKickModal('${acc.id}', '${usedBy.replace(/'/g, "\\'")}')" title="Kick ${usedBy}"><i class="fa-solid fa-user-slash"></i></button>`;
                 }
             }
         }
@@ -1389,8 +1495,7 @@ function renderTable() {
             <td style="display:${isSuperAdmin ? '' : 'none'}">${codeDisplay}</td>
             <td>${notesDisplay}</td>
             <td>${lastActiveDisplay}</td>
-            <td>${inUseDisplay}</td>
-            <td class="profile-status-badge" style="cursor:pointer" onclick="openUsageHistory('${acc.id}')" title="Click to view usage history"><span style="color:#888;font-size:11px;">📜 History</span></td>
+            <td class="profile-status-badge">${historyCell}</td>
             <td>${proxyDisplay}</td>
             <td style="text-align:right">${actions}</td>
         `;

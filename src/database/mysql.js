@@ -339,15 +339,38 @@ async function initDB() {
         }
         // Migration: Add currently_used_by columns for real-time status
         try {
-            const [cols] = await connection.query(`
+            // Check if old column exists (needs rename)
+            const [oldCols] = await connection.query(`
                 SELECT COLUMN_NAME FROM information_schema.COLUMNS 
                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'accounts' 
                 AND COLUMN_NAME = 'currently_used_by'
             `);
-            if (cols.length === 0) {
-                await connection.query(`ALTER TABLE accounts ADD COLUMN currently_used_by VARCHAR(36) DEFAULT NULL`);
+            if (oldCols.length > 0) {
+                // Rename old column to new name
+                await connection.query(`ALTER TABLE accounts CHANGE COLUMN currently_used_by currently_used_by_user_id VARCHAR(36) DEFAULT NULL`);
+                console.log('[MySQL] Renamed currently_used_by to currently_used_by_user_id');
+            }
+
+            // Check if new column exists
+            const [newCols] = await connection.query(`
+                SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'accounts' 
+                AND COLUMN_NAME = 'currently_used_by_user_id'
+            `);
+            if (newCols.length === 0) {
+                await connection.query(`ALTER TABLE accounts ADD COLUMN currently_used_by_user_id VARCHAR(36) DEFAULT NULL`);
+                console.log('[MySQL] Added currently_used_by_user_id column');
+            }
+
+            // Check if name column exists
+            const [nameCols] = await connection.query(`
+                SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'accounts' 
+                AND COLUMN_NAME = 'currently_used_by_name'
+            `);
+            if (nameCols.length === 0) {
                 await connection.query(`ALTER TABLE accounts ADD COLUMN currently_used_by_name VARCHAR(255) DEFAULT NULL`);
-                console.log('[MySQL] Added currently_used_by columns to accounts table');
+                console.log('[MySQL] Added currently_used_by_name column');
             }
         } catch (err) {
             if (err.code !== 'ER_DUP_FIELDNAME') console.error('[MySQL] Migration error (currently_used_by):', err.message);

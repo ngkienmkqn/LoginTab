@@ -1075,8 +1075,21 @@ ipcMain.handle('kick-profile-user', async (event, { accountId, restrictionMinute
         if (accounts.length === 0) throw new Error('Account not found');
         const account = accounts[0];
 
-        const kickedUserId = account.currently_used_by_user_id;
-        const kickedUsername = account.currently_used_by_name;
+        // Find who is using from profile_usage_log (last OPEN without CLOSE)
+        const [latestLogs] = await pool.query(`
+            SELECT user_id, username, action FROM profile_usage_log 
+            WHERE account_id = ? 
+            ORDER BY timestamp DESC LIMIT 1
+        `, [accountId]);
+
+        let kickedUserId = account.currently_used_by_user_id;
+        let kickedUsername = account.currently_used_by_name;
+
+        // If not in currently_used_by, check profile_usage_log
+        if (!kickedUserId && latestLogs.length > 0 && latestLogs[0].action === 'open') {
+            kickedUserId = latestLogs[0].user_id;
+            kickedUsername = latestLogs[0].username;
+        }
 
         if (!kickedUserId) {
             return { success: false, error: 'Profile is not currently in use' };
@@ -1102,6 +1115,12 @@ ipcMain.handle('kick-profile-user', async (event, { accountId, restrictionMinute
                 currently_used_by_name = NULL
             WHERE id = ?
         `, [restrictedUntil, restrictionMinutes > 0 ? callerId : null, restrictionMinutes > 0 ? kickedUserId : null, accountId]);
+
+        // Insert CLOSE event to profile_usage_log (clears stale session)
+        await pool.query(`
+            INSERT INTO profile_usage_log (account_id, user_id, username, action) 
+            VALUES (?, ?, ?, 'close')
+        `, [accountId, kickedUserId, kickedUsername || 'kicked']);
 
         // Notify all clients to force-close this profile
         const mainWindow = require('./main.js').getMainWindow();
@@ -1883,20 +1902,30 @@ ipcMain.handle('update-account-notes', async (event, accountId, notes) => {
 });
 
 // --- IPC: Profile Real-time Status ---
+// Uses profile_usage_log to detect active sessions (OPEN without subsequent CLOSE)
 ipcMain.handle('get-profile-status', async () => {
     try {
         const pool = await getPool();
+
+        // Find profiles where the latest action is 'open' (no close after)
+        // This is more reliable than currently_used_by column when apps aren't updated
         const [rows] = await pool.query(`
-            SELECT id, currently_used_by, currently_used_by_name 
-            FROM accounts 
-            WHERE currently_used_by IS NOT NULL
+            SELECT pul.account_id, pul.user_id, pul.username, pul.action, pul.timestamp
+            FROM profile_usage_log pul
+            INNER JOIN (
+                SELECT account_id, MAX(timestamp) as max_ts
+                FROM profile_usage_log
+                GROUP BY account_id
+            ) latest ON pul.account_id = latest.account_id AND pul.timestamp = latest.max_ts
+            WHERE pul.action = 'open'
         `);
+
         // Return as map: { accountId: { userId, username } }
         const statusMap = {};
         rows.forEach(row => {
-            statusMap[row.id] = {
-                userId: row.currently_used_by,
-                username: row.currently_used_by_name
+            statusMap[row.account_id] = {
+                userId: row.user_id,
+                username: row.username || 'Unknown'
             };
         });
         return { success: true, status: statusMap };

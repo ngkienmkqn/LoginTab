@@ -777,6 +777,68 @@
                 opacity: 0;
             }
         }
+
+        /* Modal Overlay Styles */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 10000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-container {
+            background: var(--bg-panel);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            width: 90%;
+            max-width: 500px;
+            max-height: 90vh;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-sidebar);
+        }
+
+        .modal-header h3 {
+            margin: 0;
+            font-size: 18px;
+        }
+
+        .modal-header .close-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 18px;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+
+        .modal-header .close-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text-main);
+        }
+
+        .modal-body {
+            padding: 20px;
+        }
     </style>
 </head>
 
@@ -1090,12 +1152,12 @@
                             <th style="width:40px"><input type="checkbox" id="selectAllProfiles"
                                     onclick="toggleSelectAll()"></th>
                             <th style="white-space:nowrap">Profile Name</th>
-                            <th style="width:60px">Status</th>
+                            <th style="width:60px">Active</th>
                             <th style="width:70px">Platform</th>
                             <th id="th-2fa-code" style="width:70px">2FA Code</th>
                             <th id="th-notes" style="width:70px">Notes</th>
                             <th style="width:85px">Last Active</th>
-                            <th style="width:70px">In Use</th>
+                            <th style="width:100px">In Use</th>
                             <th style="width:130px">Proxy</th>
                             <th style="width:110px;text-align:right">Actions</th>
                         </tr>
@@ -1857,19 +1919,23 @@
 
     <!-- Kick Profile Modal -->
     <div id="kickModal" class="modal-overlay">
-        <div class="modal-container" style="max-width: 400px;">
-            <div class="modal-header">
-                <h3>🔒 Kick User</h3>
-                <button class="close-btn" onclick="closeModal('kickModal')"><i class="fa-solid fa-xmark"></i></button>
+        <div class="modal-container" style="max-width:400px; min-width:350px;">
+            <div class="modal-header"
+                style="display:flex; justify-content:space-between; align-items:center; padding:16px 20px; border-bottom:1px solid var(--border); background:var(--bg-sidebar);">
+                <h3 style="margin:0; font-size:18px;">🔒 Kick User</h3>
+                <button class="close-btn" onclick="closeModal('kickModal')"
+                    style="background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:18px; padding:4px 8px;"><i
+                        class="fa-solid fa-xmark"></i></button>
             </div>
-            <div class="modal-body">
-                <p style="margin-bottom: 16px;">
-                    Kick <strong id="kickTargetName"></strong> khỏi profile?
+            <div class="modal-body" style="padding:20px; display:block;">
+                <p style="margin:0 0 16px 0; font-size:14px;">
+                    Kick <strong id="kickTargetName" style="color:#f59e0b;"></strong> khỏi profile?
                 </p>
 
-                <label style="display:block; margin-bottom:8px; font-weight:600;">Tùy chọn hạn chế:</label>
+                <label style="display:block; margin-bottom:8px; font-weight:600; font-size:13px;">Tùy chọn hạn
+                    chế:</label>
                 <select id="kickRestriction"
-                    style="width:100%; padding:10px; margin-bottom:16px; background:var(--bg-body); color:var(--text-main); border:1px solid var(--border); border-radius:4px;">
+                    style="width:100%; padding:10px; margin-bottom:16px; background:var(--bg-body); color:var(--text-main); border:1px solid var(--border); border-radius:4px; font-size:13px;">
                     <option value="0">Không hạn chế (chỉ kick)</option>
                     <option value="5">Hạn chế 5 phút</option>
                     <option value="10">Hạn chế 10 phút</option>
@@ -1877,11 +1943,12 @@
                     <option value="-1">Thu hồi quyền (vĩnh viễn)</option>
                 </select>
 
-                <div style="display:flex; gap:10px;">
-                    <button class="btn btn-danger" onclick="kickProfileUser()">
+                <div style="display:flex; gap:10px; justify-content:flex-end;">
+                    <button class="btn btn-secondary" onclick="closeModal('kickModal')"
+                        style="padding:8px 16px;">Hủy</button>
+                    <button class="btn btn-danger" onclick="kickProfileUser()" style="padding:8px 16px;">
                         <i class="fa-solid fa-user-slash"></i> Kick
                     </button>
-                    <button class="btn btn-secondary" onclick="closeModal('kickModal')">Hủy</button>
                 </div>
             </div>
         </div>

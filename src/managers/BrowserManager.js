@@ -91,6 +91,23 @@ class BrowserManager {
             }
         }
 
+        // ================================================================
+        // SET PROFILE AS IN USE by current user
+        // ================================================================
+        try {
+            const { getPool } = require('../database/mysql');
+            const pool = await getPool();
+            await pool.query(`
+                UPDATE accounts SET 
+                    currently_used_by_user_id = ?,
+                    currently_used_by_name = ?
+                WHERE id = ?
+            `, [currentUserId, currentUsername, accountId]);
+            console.log(`[BrowserManager] Profile ${accountId} marked as in use by ${currentUsername}`);
+        } catch (dbErr) {
+            console.error('[BrowserManager] Failed to mark profile as in use:', dbErr.message);
+        }
+
         console.log('[BrowserManager] Loaded v2-ProxyChain (Forced Update)');
         console.log(`[BrowserManager] Syncing session for: ${account.name}`);
 
@@ -543,7 +560,7 @@ class BrowserManager {
                             await pool.query(
                                 `UPDATE accounts SET 
                                     last_active = NOW(),
-                                    currently_used_by = NULL,
+                                    currently_used_by_user_id = NULL,
                                     currently_used_by_name = NULL
                                 WHERE id = ?`,
                                 [account.id]
