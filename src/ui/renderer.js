@@ -365,6 +365,11 @@ async function handleLogin() {
                 statusPollingInterval = setInterval(pollProfileStatus, 5000);
                 pollProfileStatus(); // Immediate first poll
             }
+
+            // Start data refresh polling (30s) for Last Active updates
+            setInterval(() => {
+                loadAllData(); // Refresh accounts to update Last Active timestamps
+            }, 30000);
         } else {
             alert(res.error);
         }
@@ -1090,6 +1095,10 @@ async function remove(id, name) {
 }
 
 function launch(id) {
+    // Immediately disable button to prevent double-click
+    openBrowserIds.add(id);
+    updateProfileButtonState(id, 'running');
+
     ipcRenderer.invoke('launch-browser', id);
 }
 
