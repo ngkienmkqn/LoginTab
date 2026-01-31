@@ -24,6 +24,7 @@
         "jsqr": "^1.4.0",
         "lowdb": "^7.0.1",
         "mysql2": "^3.16.0",
+        "node-fetch": "^3.3.2",
         "otpauth": "^9.4.1",
         "playwright": "^1.57.0",
         "playwright-extra": "^4.3.6",
@@ -37,6 +38,7 @@
         "rebrowser-patches": "^1.0.19",
         "selenium-webdriver": "^4.40.0",
         "socket.io": "^4.7.4",
+        "speakeasy": "^2.0.0",
         "undetected-chromedriver": "^0.0.1-security",
         "uuid": "^9.0.1",
         "winston": "^3.13.0"
