@@ -1,10 +1,11 @@
 {
     "name": "login-tab",
-    "version": "2.5.0",
-    "description": "Login Tab - Advanced Account Manager with RBAC v2",
+    "version": "3.0.0",
+    "description": "Login Tab - Advanced Account Manager",
     "main": "main.js",
     "scripts": {
         "start": "electron .",
+        "dev": "electron .",
         "build": "electron-builder"
     },
     "author": "Nguyễn Trung Kiên",
@@ -16,14 +17,14 @@
     "dependencies": {
         "adm-zip": "^0.5.16",
         "camoufox": "^0.1.19",
-        "electron-store": "^8.1.0",
+        "express": "^4.18.2",
         "filtrex": "^3.1.0",
         "fs-extra": "^11.2.0",
         "hi-base32": "^0.5.1",
         "jsqr": "^1.4.0",
         "lowdb": "^7.0.1",
         "mysql2": "^3.16.0",
-        "otplib": "^13.1.0",
+        "otpauth": "^9.4.1",
         "playwright": "^1.57.0",
         "playwright-extra": "^4.3.6",
         "playwright-extra-plugin-stealth": "^0.0.1",
@@ -35,13 +36,14 @@
         "puppeteer-real-browser": "^1.4.4",
         "rebrowser-patches": "^1.0.19",
         "selenium-webdriver": "^4.40.0",
+        "socket.io": "^4.7.4",
         "undetected-chromedriver": "^0.0.1-security",
         "uuid": "^9.0.1",
         "winston": "^3.13.0"
     },
     "devDependencies": {
-        "electron": "^39.2.7",
-        "electron-builder": "^24.13.3"
+        "electron": "^28.0.0",
+        "electron-builder": "^24.9.1"
     },
     "build": {
         "appId": "com.logintab.browser",

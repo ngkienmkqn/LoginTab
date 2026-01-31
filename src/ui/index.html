@@ -396,7 +396,7 @@
 
         .modal-content {
             background: var(--bg-card);
-            width: 700px;
+            width: 750px;
             border-radius: 12px;
             border: 1px solid var(--border);
             box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
@@ -542,10 +542,12 @@
 
         /* Tabs inside Modal */
         .modal-tabs {
-            min-width: 160px;
+            min-width: 130px;
+            max-width: 140px;
             background-color: rgba(0, 0, 0, 0.2);
             border-right: 1px solid var(--border);
-            padding: 20px 0;
+            padding: 15px 0;
+            flex-shrink: 0;
         }
 
         .tab-btn {
@@ -615,6 +617,8 @@
             display: flex;
             justify-content: flex-end;
             gap: 12px;
+            flex-shrink: 0;
+            background: var(--bg-card);
         }
 
         .row {
@@ -1317,8 +1321,8 @@
                     <button class="tab-btn active" onclick="switchTab('tab-general')">General</button>
                     <button class="tab-btn" onclick="switchTab('tab-auth')">Auth & 2FA</button>
                     <button class="tab-btn" onclick="switchTab('tab-proxy')">Proxy</button>
-                    <div class="tab-link" data-tab="fingerprint">Fingerprint</div>
-                    <div class="tab-link" data-tab="extensions">Extensions</div>
+                    <button class="tab-btn" onclick="switchTab('tab-fingerprint')">Fingerprint</button>
+                    <button class="tab-btn" onclick="switchTab('tab-extensions')">Extensions</button>
                 </div>
                 <div class="tab-content-area">
                     <!-- Tab: General -->
@@ -1584,12 +1588,11 @@
                     </div>
                 </div>
             </div>
+            <div class="modal-footer">
+                <button class="btn btn-danger" onclick="closeModal('profileModal')">Cancel</button>
+                <button class="btn" onclick="saveProfile()">Create Profile</button>
+            </div>
         </div>
-        <div class="modal-footer">
-            <button class="btn btn-danger" onclick="closeModal('profileModal')">Cancel</button>
-            <button class="btn" onclick="saveProfile()">Save Profile</button>
-        </div>
-    </div>
     </div>
 
     <!-- Proxy Modal -->
@@ -1827,7 +1830,7 @@
     </div>
 
     <script src="user_management.js?v=20260118-2"></script>
-    <script src="renderer.js?v=20260118-2"></script>
+    <script src="renderer.js?v=20260131"></script>
 </body>
 
 </html>

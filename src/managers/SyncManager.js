@@ -28,13 +28,36 @@ class SyncManager {
             tempCopyPath = path.join(this.tempDir, `copy_${accountId}_${Date.now()}`);
             await fs.ensureDir(tempCopyPath);
 
-            // Copy but ignore temp files and locks that cause ENOENT
+            // Copy but ignore cache, temp files and locks that cause ENOENT
+            // These folders can be huge (40MB+) and are not needed for session restoration
             await fs.copy(sessionPath, tempCopyPath, {
                 filter: (src) => {
                     const base = path.basename(src).toLowerCase();
-                    return !base.endsWith('.tmp') &&
-                        !base.includes('singleton') &&
-                        !base.includes('lock');
+                    const relativePath = path.relative(sessionPath, src).toLowerCase();
+
+                    // Skip temp files and locks
+                    if (base.endsWith('.tmp') || base.includes('singleton') || base.includes('lock')) {
+                        return false;
+                    }
+
+                    // Skip large cache directories that aren't needed for session
+                    // KEEP: Cookies, Local Storage, IndexedDB, Preferences (needed for auth)
+                    // EXCLUDE: Only pure performance caches
+                    const excludeDirs = [
+                        'cache', 'code cache', 'gpucache', 'shader cache',
+                        'component_crx_cache', 'jumplisticoncache',
+                        'service worker', 'blob_storage',
+                        'platform_notifications', 'webrtc_event_logs',
+                        'crashpad', 'module_info cache', 'safe browsing'
+                    ];
+
+                    for (const dir of excludeDirs) {
+                        if (relativePath.startsWith(dir + path.sep) || relativePath === dir) {
+                            return false;
+                        }
+                    }
+
+                    return true;
                 }
             });
 

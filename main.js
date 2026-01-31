@@ -1,4 +1,7 @@
+// GemLogin-style: No GPU disable flags - rely on bundled DLLs (ffmpeg, swiftshader)
 const { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage } = require('electron');
+// NOTE: GemLogin does NOT disable hardware acceleration or GPU features
+
 const path = require('path');
 const fs = require('fs-extra');
 const { initDB, getPool, getDatabaseStats, resetDatabase } = require('./src/database/mysql');
@@ -869,7 +872,6 @@ ipcMain.handle('launch-browser', async (event, arg) => {
             const [workflowRows] = await pool.query('SELECT * FROM workflows WHERE id = ?', [account.workflow_id]);
             if (workflowRows.length > 0) {
                 const workflow = workflowRows[0];
-                // graph_data is already parsed by mysql2 driver
                 const graphData = typeof workflow.graph_data === 'string'
                     ? JSON.parse(workflow.graph_data)
                     : workflow.graph_data || {};
@@ -884,7 +886,6 @@ ipcMain.handle('launch-browser', async (event, arg) => {
 
                 console.log(`[IPC] Executing workflow: ${workflow.name}`);
 
-                // Get current page
                 const page = BrowserManager.lastPage;
                 if (page) {
                     const AutomationManager = require('./src/managers/AutomationManager');
@@ -892,8 +893,8 @@ ipcMain.handle('launch-browser', async (event, arg) => {
                     await automationManager.runWorkflow(
                         workflowData,
                         page,
-                        {}, // userProfile (placeholder)
-                        { // profileContext (Variables)
+                        {},
+                        {
                             username: account.auth?.username || '',
                             password: account.auth?.password || '',
                             twofa: account.auth?.twoFactorSecret || account.auth?.secret2FA || ''

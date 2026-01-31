@@ -8,7 +8,7 @@ const ERRORS = {
     ERR_ACCESS_DENIED: 'ERR_ACCESS_DENIED',
     ERR_EGRESS_DENYLIST: 'ERR_EGRESS_DENYLIST',
     ERR_EGRESS_DNS_PRIVATE_IP: 'ERR_EGRESS_DNS_PRIVATE_IP',
-    ERR_EGRESS_REDIRECT_PRIVATE_IP: 'ERR_EGRESS_REDIRECT_PRIVATE_IP', // Redundant for static check but useful for future
+    ERR_EGRESS_REDIRECT_PRIVATE_IP: 'ERR_EGRESS_REDIRECT_PRIVATE_IP',
     ERR_EGRESS_PROTOCOL: 'ERR_EGRESS_PROTOCOL',
     ERR_SANDBOX_TRAVERSAL: 'ERR_SANDBOX_TRAVERSAL',
     ERR_SANDBOX_OUTSIDE_ROOT: 'ERR_SANDBOX_OUTSIDE_ROOT',
@@ -28,14 +28,14 @@ const ROLE_CAPABILITIES = {
 
 // Network Fortress Configuration
 const PRIVATE_IP_RANGES = [
-    /^127\./,           // 127.0.0.0/8
-    /^10\./,            // 10.0.0.0/8
-    /^192\.168\./,      // 192.168.0.0/16
-    /^172\.(1[6-9]|2[0-9]|3[0-1])\./, // 172.16.0.0/12
-    /^169\.254\./,      // Link-local
-    /^fc00:/,           // IPv6 Unique Local
-    /^fe80:/,           // IPv6 Link-local
-    /^::1$/             // IPv6 Loopback
+    /^127\./,
+    /^10\./,
+    /^192\.168\./,
+    /^172\.(1[6-9]|2[0-9]|3[0-1])\./,
+    /^169\.254\./,
+    /^fc00:/,
+    /^fe80:/,
+    /^::1$/
 ];
 
 const ALLOWED_PROTOCOLS = ['http:', 'https:', 'imaps:'];

@@ -1227,7 +1227,7 @@ function renderPlatformTable() {
 
         tr.innerHTML = `
             <td><span style="font-weight:600; color: var(--accent)">${p.name}</span></td>
-            <td><a href="#" style="color:var(--accent)" onclick="require('electron').shell.openExternal('${p.url}')">${p.url}</a></td>
+            <td><a href="${p.url}" target="_blank" style="color:var(--accent)">${p.url}</a></td>
             <td style="text-align:right">${actions}</td>
         `;
         tbody.appendChild(tr);

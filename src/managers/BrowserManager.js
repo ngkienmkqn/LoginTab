@@ -1,14 +1,11 @@
 const puppeteer = require('puppeteer-core');
-// const { addExtra } = require('puppeteer-extra');
-// const puppeteer = addExtra(puppeteerCore);
-// PURE PUPPETEER CORE: Fixes ERR_REQUIRE_ASYNC_MODULE definitively
-// Stealth Plugin REMOVED to prevent ERR_REQUIRE_ASYNC_MODULE in Electron
-
-// WINNING CONFIG: Manual Flags Only + IgnoreDefaultArgs: true
-// (No plugins used)
 const path = require('path');
 const fs = require('fs-extra');
+const os = require('os');
 const { app } = require('electron');
+
+// Data directory (replaces Electron's app.getPath('userData'))
+const DATA_DIR = app.getPath('userData');
 
 // ... (imports)
 
@@ -17,17 +14,21 @@ const { app } = require('electron');
 // ... (imports)
 const ProxyChain = require('proxy-chain');
 const SyncManager = require('./SyncManager');
-const { TOTP } = require('otplib');
+const OTPAuth = require('otpauth');
 const crypto = require('crypto');
 const FingerprintGenerator = require('../utils/FingerprintGenerator');
 const PuppeteerEvasion = require('../utils/PuppeteerEvasion');
 const { getPool } = require('../database/mysql');
 
-// Manually configure crypto for otplib v13+
-const authenticator = new TOTP({
-    createDigest: (algorithm, content) => crypto.createHash(algorithm).update(content).digest(),
-    createRandomBytes: (size) => crypto.randomBytes(size)
-});
+// Helper function to generate TOTP code (replaces otplib)
+function generateTOTP(secret) {
+    const totp = new OTPAuth.TOTP({
+        secret: OTPAuth.Secret.fromBase32(secret),
+        digits: 6,
+        period: 30
+    });
+    return totp.generate();
+}
 
 class BrowserManager {
     // Track active browser instances by account ID
@@ -147,38 +148,56 @@ class BrowserManager {
 
         console.log(`[BrowserManager] Launching: ${account.name} (${account.id})`);
 
-        // v2.5.1: Use Iron Browser 141 Portable for IPHey 5/5
-        const bundledIronPath = path.join(
-            app.getAppPath(),
-            'resources',
-            'iron',
-            'Iron',
-            'chrome.exe'
-        );
+        // v2.5.1: Prioritize bundled Chromium, fallback to system browsers
+        let executablePath = null;
 
-        let executablePath = bundledIronPath;
+        // Bundled Iron Browser 141 paths (relative to project root)
+        const projectRoot = path.join(__dirname, '..', '..');
+        const bundledPaths = {
+            win32: path.join(projectRoot, 'browser', '141', 'Chrome-bin', 'chrome.exe'),
+            darwin: path.join(projectRoot, 'browser', 'mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium')
+        };
 
-        // Fallback to system Chrome if Iron not found
-        if (!fs.existsSync(bundledIronPath)) {
-            console.log('[BrowserManager] ⚠️ Iron Browser not found, using system Chrome');
-            const possiblePaths = [
-                'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-                'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-                path.join(require('os').homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe')
-            ];
+        // Priority order: GemLogin's Chromium (tested on Windows N) > System Chrome > Bundled Chromium
+        const platform = process.platform;
+        const bundledPath = bundledPaths[platform];
 
-            for (const p of possiblePaths) {
-                if (fs.existsSync(p)) {
-                    executablePath = p;
-                    break;
-                }
+        const systemPaths = platform === 'win32' ? [
+            // GemLogin's Iron Browser 141 - better anti-detection than Chromium!
+            path.join(os.homedir(), '.gemlogin', 'browser', '141', 'Chrome-bin', 'chrome.exe'),
+            // Fallback to Chromium 134 if 141 not available
+            path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+            'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+            'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+            path.join(os.homedir(), 'AppData', 'Local', 'Chromium', 'Application', 'chrome.exe'),
+            'C:\\Program Files\\Chromium\\Application\\chrome.exe',
+        ] : [
+            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+            '/Applications/Chromium.app/Contents/MacOS/Chromium',
+            path.join(os.homedir(), 'Applications', 'Google Chrome.app', 'Contents', 'MacOS', 'Google Chrome')
+        ];
+
+        // Check system Chrome FIRST (like GemLogin)
+        console.log('[BrowserManager] Checking system paths...');
+        for (const p of systemPaths) {
+            const exists = fs.existsSync(p);
+            console.log(`[BrowserManager]   ${p} => ${exists ? 'FOUND' : 'not found'}`);
+            if (exists) {
+                executablePath = p;
+                console.log(`[BrowserManager] ✓ SELECTED: ${executablePath}`);
+                break;
             }
         }
 
-        if (!executablePath) throw new Error('Browser executable not found.');
-        console.log(`[BrowserManager] ✓ Using Browser: ${executablePath}`);
+        // Fallback to bundled Chromium only if no system Chrome found
+        if (!executablePath && bundledPath && fs.existsSync(bundledPath)) {
+            executablePath = bundledPath;
+            console.log(`[BrowserManager] Using BUNDLED Chromium (fallback): ${executablePath}`);
+        }
 
-        const userDataDir = path.join(app.getPath('userData'), 'sessions', account.id);
+        if (!executablePath) throw new Error('Browser executable not found. Please install Google Chrome or ensure bundled Chromium is present.');
+
+        const userDataDir = path.join(DATA_DIR, 'sessions', account.id);
         await fs.ensureDir(userDataDir);
 
         // DISABLE PASSWORD SAVE POPUP (Edit Preferences File)
@@ -207,18 +226,30 @@ class BrowserManager {
             console.warn('[Browser] Failed to patch preferences:', e);
         }
 
+        // EXACT GemLogin flags from chrome://version (copy-paste, no modifications!)
         const args = [
+            '--remote-debugging-port=0', // REQUIRED: Puppeteer needs this to connect (auto-assign port like GemLogin)
             '--no-first-run',
+            '--no-crashpad',
+            '--disable-crashpad',
+            '--metrics-recording-only',
             '--no-default-browser-check',
-            '--disable-infobars', // v2.5.0: Hide automation infobar
-            '--exclude-switches=enable-automation', // v2.5.0: Hide automation banner
-            '--disable-blink-features=AutomationControlled', // v2.5.0: Remove automation controlled
-            '--disable-save-password-bubble',
-            '--password-store=basic',
-            '--use-mock-keychain',
-            '--disable-popup-blocking',
-            '--disable-notifications',
-            `--user-data-dir=${userDataDir}`
+            '--disable-features=FlashDeprecationWarning,EnablePasswordsAccountStorage,CalculateNativeWinOcclusion,AcceleratedVideoDecode,ChromeLabs,ReadLater,ChromeWhatsNewUI,TrackingProtection3pcd',
+            '--disable-crash-reporter',
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding',
+            '--hide-crash-restore-bubble',
+            '--disable-background-mode',
+            '--disable-timer-throttling',
+            '--disable-render-backgrounding',
+            '--disable-background-media-suspend',
+            '--disable-external-intent-requests',
+            '--disable-ipc-flooding-protection',
+            '--disable-extension-turned-off',
+            `--user-data-dir=${userDataDir}`,
+            `--profile-directory=${account.name.replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 50)}`, // Custom profile name like GemLogin
+            '--force-device-scale-factor=1'
         ];
 
         if (account.fingerprint && account.fingerprint.resolution) {
@@ -227,19 +258,11 @@ class BrowserManager {
             args.push('--start-maximized');
         }
 
-        // User Agent from fingerprint (or default)
-        // ALIGNMENT: Comment out UA override to use Real Browser UA (matches Test 3)
-        /*
-        if (account.fingerprint && account.fingerprint.userAgent) {
-            args.push(`--user-agent=${account.fingerprint.userAgent}`);
-        } else {
-            // Fallback to latest Chrome if no fingerprint
-            args.push(`--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36`);
-        }
-        */
+        // User Agent - MUST match Iron Browser 141 version!
+        const ironBrowserUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
+        args.push(`--user-agent=${ironBrowserUA}`);
 
-        args.push(`--lang=${account.fingerprint.language || 'en-US'}`); // Match fingerprint language
-        // args.push('--exclude-switches=enable-automation'); // Redundant with ignoreDefaultArgs
+        args.push(`--lang=${account.fingerprint?.language || 'vi-VN'}`); // Match fingerprint language
 
         // TIMEZONE RANDOMIZATION (Compatible Zones)
         // Avoids static "Asia/Ho_Chi_Minh" flag for all accounts
@@ -299,10 +322,12 @@ class BrowserManager {
             headless: false,
             defaultViewport: null,
             userDataDir,
-            args: args, // Use direct args
+            args: args,
             ignoreHTTPSErrors: true,
-            ignoreDefaultArgs: true, // Keep this true (Clean Slate)
-            pipe: true // CRITICAL: Required for packaged Electron apps to communicate with Chrome
+            // CRITICAL: Ignore ALL Puppeteer default flags (like chrome-launcher does!)
+            // Puppeteer adds many extra flags that GemLogin doesn't use
+            ignoreDefaultArgs: true,
+            // Remove pipe: true - it can cause connection issues on Windows
         });
 
         // ---------------------------------------------------------
@@ -454,15 +479,154 @@ class BrowserManager {
                 // 1. Hide navigator.webdriver (Standard)
                 Object.defineProperty(navigator, 'webdriver', { get: () => false });
 
+                // 1.5. CRITICAL: Match Iron Browser 141 version!
+                const chromeVersion = '141.0.0.0';
+                const chromeMajor = '141';
+
+                // Override userAgentData (Critical for iphey detection!)
+                if (navigator.userAgentData) {
+                    Object.defineProperty(navigator, 'userAgentData', {
+                        get: () => ({
+                            brands: [
+                                { brand: 'Chromium', version: chromeMajor },
+                                { brand: 'Not)A;Brand', version: '99' }
+                            ],
+                            mobile: false,
+                            platform: 'Windows',
+                            getHighEntropyValues: (hints) => Promise.resolve({
+                                brands: [
+                                    { brand: 'Chromium', version: chromeMajor },
+                                    { brand: 'Not)A;Brand', version: '99' }
+                                ],
+                                fullVersionList: [
+                                    { brand: 'Chromium', version: chromeVersion },
+                                    { brand: 'Not)A;Brand', version: '99.0.0.0' }
+                                ],
+                                mobile: false,
+                                platform: 'Windows',
+                                platformVersion: '10.0.0',
+                                architecture: 'x86',
+                                bitness: '64',
+                                model: '',
+                                uaFullVersion: chromeVersion
+                            })
+                        })
+                    });
+                }
+
+                // Override appVersion
+                Object.defineProperty(navigator, 'appVersion', {
+                    get: () => `5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`
+                });
+
+                // Override userAgent property (backup)
+                Object.defineProperty(navigator, 'userAgent', {
+                    get: () => `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`
+                });
+
                 // 2. Mock Chrome Runtime (Critical for IPHey)
                 if (!window.chrome) window.chrome = {};
                 if (!window.chrome.runtime) window.chrome.runtime = {};
 
-                // 3. Mock Plugins & MimeTypes (Linked)
+                // Add chrome.csi and chrome.loadTimes (real Chrome has these)
+                if (!window.chrome.csi) window.chrome.csi = () => ({});
+                if (!window.chrome.loadTimes) window.chrome.loadTimes = () => ({});
+
+                // ============================================
+                // CRITICAL: AUTOMATION FRAMEWORK HIDING
+                // ============================================
+
+                // 2.1. Remove cdc_ properties (ChromeDriver/Puppeteer markers)
+                const cdcProps = [
+                    'cdc_adoQpoasnfa76pfcZLmcfl_Array',
+                    'cdc_adoQpoasnfa76pfcZLmcfl_Promise',
+                    'cdc_adoQpoasnfa76pfcZLmcfl_Symbol'
+                ];
+                for (const prop of cdcProps) {
+                    if (document[prop]) delete document[prop];
+                    if (window[prop]) delete window[prop];
+                }
+                // Deep scan for any cdc_ properties
+                Object.keys(window).forEach(key => {
+                    if (/^cdc_/.test(key)) {
+                        try { delete window[key]; } catch (e) { }
+                    }
+                });
+
+                // 2.2. Remove Puppeteer-specific markers
+                delete window.__puppeteer_evaluation_script__;
+                delete window.__playwright_evaluation_script__;
+                delete window.__webdriverTimeout;
+                delete window.callPhantom;
+                delete window._phantom;
+                delete window.phantom;
+                delete window.domAutomation;
+                delete window.domAutomationController;
+
+                // 2.3. Hide automation properties from Error stack
+                const originalError = Error;
+                window.Error = function (...args) {
+                    const error = new originalError(...args);
+                    const originalStack = error.stack;
+                    Object.defineProperty(error, 'stack', {
+                        get: function () {
+                            return originalStack
+                                .split('\n')
+                                .filter(line => !line.includes('puppeteer') && !line.includes('automation'))
+                                .join('\n');
+                        }
+                    });
+                    return error;
+                };
+                window.Error.prototype = originalError.prototype;
+
+                // 2.4. Override Notification permission prompt detection
+                const originalQuery = window.Notification && Notification.permission;
+                if (window.Notification) {
+                    Object.defineProperty(Notification, 'permission', {
+                        get: () => 'default'
+                    });
+                }
+
+                // 2.5. Hide automation in navigator (beyond webdriver)
+                Object.defineProperty(navigator, 'vendor', { get: () => 'Google Inc.' });
+                Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+                Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0 });
+                Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+
+                // 3. Mock Plugins & MimeTypes - Updated for Chrome 134!
+                // Note: Native Client was removed in Chrome 88+, PDF Viewer is now built-in
                 const mockPlugins = [
-                    { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-                    { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
-                    { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
+                    {
+                        name: 'PDF Viewer',
+                        filename: 'internal-pdf-viewer',
+                        description: 'Portable Document Format',
+                        length: 2
+                    },
+                    {
+                        name: 'Chrome PDF Viewer',
+                        filename: 'internal-pdf-viewer',
+                        description: 'Portable Document Format',
+                        length: 2
+                    },
+                    {
+                        name: 'Chromium PDF Viewer',
+                        filename: 'internal-pdf-viewer',
+                        description: 'Portable Document Format',
+                        length: 2
+                    },
+                    {
+                        name: 'Microsoft Edge PDF Viewer',
+                        filename: 'internal-pdf-viewer',
+                        description: 'Portable Document Format',
+                        length: 2
+                    },
+                    {
+                        name: 'WebKit built-in PDF',
+                        filename: 'internal-pdf-viewer',
+                        description: 'Portable Document Format',
+                        length: 2
+                    }
                 ];
 
                 Object.defineProperty(navigator, 'plugins', {
@@ -478,8 +642,8 @@ class BrowserManager {
                 Object.defineProperty(navigator, 'mimeTypes', {
                     get: () => {
                         const m = [
-                            { type: 'application/pdf', suffixes: 'pdf', description: '', enabledPlugin: mockPlugins[0] },
-                            { type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: mockPlugins[1] }
+                            { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: mockPlugins[0] },
+                            { type: 'text/pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: mockPlugins[0] }
                         ];
                         m.item = (i) => m[i];
                         m.namedItem = (type) => m.find(x => x.type === type);
@@ -487,9 +651,9 @@ class BrowserManager {
                     }
                 });
 
-                // 4. Mock Languages
+                // 4. Mock Languages (Must match --lang flag!)
                 Object.defineProperty(navigator, 'languages', {
-                    get: () => ['en-US', 'en'],
+                    get: () => runInfo.languages || ['vi-VN', 'vi', 'en-US', 'en'],
                 });
 
                 // 5. Polyfill Notification (Fixes ReferenceError)
