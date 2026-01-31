@@ -426,16 +426,20 @@ async function unassignAccount(accountId, userId, username) {
     try {
         const res = await ipcRenderer.invoke('unassign-account', { accountId, userId });
         if (res.success) {
+            // Toast feedback
+            if (typeof showToast === 'function') showToast('Account unassigned', 'success');
             // Refresh modal to show updated list
             showAssignedAccounts(userId, username);
             // Refresh user table to update counts
             users = await ipcRenderer.invoke('get-users');
             renderUserTable();
         } else {
-            alert('Error: ' + res.error);
+            if (typeof showToast === 'function') showToast('Error: ' + res.error, 'error');
+            else alert('Error: ' + res.error);
         }
     } catch (err) {
-        alert('Error: ' + err.message);
+        if (typeof showToast === 'function') showToast('Error: ' + err.message, 'error');
+        else alert('Error: ' + err.message);
     }
 }
 
@@ -477,6 +481,8 @@ async function executeAssign() {
         });
 
         if (res.success) {
+            // Toast feedback
+            if (typeof showToast === 'function') showToast(`${selectedIds.length} account(s) assigned to ${currentAssigningUsername}`, 'success');
             // Hide dropdown
             document.getElementById('assignAccountsDropdown').style.display = 'none';
             // Refresh modal
@@ -485,10 +491,12 @@ async function executeAssign() {
             users = await ipcRenderer.invoke('get-users');
             renderUserTable();
         } else {
-            alert('Error: ' + res.error);
+            if (typeof showToast === 'function') showToast('Error: ' + res.error, 'error');
+            else alert('Error: ' + res.error);
         }
     } catch (err) {
-        alert('Error: ' + err.message);
+        if (typeof showToast === 'function') showToast('Error: ' + err.message, 'error');
+        else alert('Error: ' + err.message);
     }
 }
 

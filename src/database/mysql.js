@@ -295,6 +295,83 @@ async function initDB() {
             console.error('[MySQL] Migration error (audit_log):', err.message);
         }
 
+        // Migration: Add last_active and last_accessed_by columns for activity tracking
+        try {
+            const [cols] = await connection.query(`
+                SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'accounts' 
+                AND COLUMN_NAME = 'last_accessed_by'
+            `);
+            if (cols.length === 0) {
+                await connection.query(`ALTER TABLE accounts ADD COLUMN last_accessed_by VARCHAR(36) DEFAULT NULL`);
+                console.log('[MySQL] Added last_accessed_by column to accounts table');
+            }
+        } catch (err) {
+            if (err.code !== 'ER_DUP_FIELDNAME') console.error('[MySQL] Migration error (last_accessed_by):', err.message);
+        }
+
+        try {
+            const [cols] = await connection.query(`
+                SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'accounts' 
+                AND COLUMN_NAME = 'last_accessed_by_name'
+            `);
+            if (cols.length === 0) {
+                await connection.query(`ALTER TABLE accounts ADD COLUMN last_accessed_by_name VARCHAR(255) DEFAULT NULL`);
+                console.log('[MySQL] Added last_accessed_by_name column to accounts table');
+            }
+        } catch (err) {
+            if (err.code !== 'ER_DUP_FIELDNAME') console.error('[MySQL] Migration error (last_accessed_by_name):', err.message);
+        }
+
+        try {
+            const [cols] = await connection.query(`
+                SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'accounts' 
+                AND COLUMN_NAME = 'last_active'
+            `);
+            if (cols.length === 0) {
+                await connection.query(`ALTER TABLE accounts ADD COLUMN last_active DATETIME DEFAULT NULL`);
+                console.log('[MySQL] Added last_active column to accounts table');
+            }
+        } catch (err) {
+            if (err.code !== 'ER_DUP_FIELDNAME') console.error('[MySQL] Migration error (last_active):', err.message);
+        }
+        // Migration: Add currently_used_by columns for real-time status
+        try {
+            const [cols] = await connection.query(`
+                SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'accounts' 
+                AND COLUMN_NAME = 'currently_used_by'
+            `);
+            if (cols.length === 0) {
+                await connection.query(`ALTER TABLE accounts ADD COLUMN currently_used_by VARCHAR(36) DEFAULT NULL`);
+                await connection.query(`ALTER TABLE accounts ADD COLUMN currently_used_by_name VARCHAR(255) DEFAULT NULL`);
+                console.log('[MySQL] Added currently_used_by columns to accounts table');
+            }
+        } catch (err) {
+            if (err.code !== 'ER_DUP_FIELDNAME') console.error('[MySQL] Migration error (currently_used_by):', err.message);
+        }
+
+        // Migration: Create profile_usage_log table for usage history
+        try {
+            await connection.query(`
+                CREATE TABLE IF NOT EXISTS profile_usage_log (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    account_id VARCHAR(36) NOT NULL,
+                    user_id VARCHAR(36) NOT NULL,
+                    username VARCHAR(255),
+                    action ENUM('open', 'close') NOT NULL,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_account_time (account_id, timestamp),
+                    INDEX idx_user_id (user_id)
+                )
+            `);
+            console.log('[MySQL] profile_usage_log table ready');
+        } catch (err) {
+            console.error('[MySQL] Migration error (profile_usage_log):', err.message);
+        }
+
         // Seed Default Admin (Safe Insert)
         await connection.query("INSERT IGNORE INTO users (id, username, password, role) VALUES ('admin-id', 'admin', 'admin', 'super_admin')");
         console.log('[MySQL] Admin checked/seeded.');

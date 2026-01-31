@@ -20,6 +20,19 @@ const FingerprintGenerator = require('../utils/FingerprintGenerator');
 const PuppeteerEvasion = require('../utils/PuppeteerEvasion');
 const { getPool } = require('../database/mysql');
 
+// Helper to send events to frontend for UX feedback
+function sendToUI(channel, data) {
+    try {
+        const { getMainWindow } = require('../../main');
+        const mainWindow = getMainWindow();
+        if (mainWindow && mainWindow.webContents) {
+            mainWindow.webContents.send(channel, data);
+        }
+    } catch (e) {
+        // Main module not ready yet, ignore
+    }
+}
+
 // Helper function to generate TOTP code (replaces otplib)
 function generateTOTP(secret) {
     const totp = new OTPAuth.TOTP({
@@ -330,6 +343,39 @@ class BrowserManager {
             // Remove pipe: true - it can cause connection issues on Windows
         });
 
+        // Notify frontend that browser is now running
+        sendToUI('browser-opened', { accountId: account.id, accountName: account.name });
+
+        // Update last_active, currently_used_by, and log usage
+        try {
+            const pool = await getPool();
+            // Get current user from global auth
+            const currentUserId = global.currentAuthUser?.id || null;
+            const currentUsername = global.currentAuthUser?.username || 'Unknown';
+
+            // Set currently_used_by for real-time status
+            await pool.query(
+                `UPDATE accounts SET 
+                    last_active = NOW(), 
+                    last_accessed_by = ?,
+                    last_accessed_by_name = ?,
+                    currently_used_by = ?,
+                    currently_used_by_name = ?
+                WHERE id = ?`,
+                [currentUserId, currentUsername, currentUserId, currentUsername, account.id]
+            );
+
+            // Log open action to usage history
+            await pool.query(
+                `INSERT INTO profile_usage_log (account_id, user_id, username, action) VALUES (?, ?, ?, 'open')`,
+                [account.id, currentUserId, currentUsername]
+            );
+
+            console.log(`[BrowserManager] Updated status for ${account.name} (opened by ${currentUsername})`);
+        } catch (dbErr) {
+            console.error('[BrowserManager] Failed to update status:', dbErr.message);
+        }
+
         // ---------------------------------------------------------
         // EVASION INJECTION (Critical Step)
         // ---------------------------------------------------------
@@ -429,39 +475,69 @@ class BrowserManager {
 
 
 
-        browser.on('disconnected', async () => {
+        browser.on('disconnected', () => {
             console.log(`[BrowserManager] Browser closed. Cleaning up...`);
-            BrowserManager.activeBrowsers.delete(account.id);
 
+            // IMMEDIATELY: Clean up state + notify UI (no await, sync operations)
+            BrowserManager.activeBrowsers.delete(account.id);
+            sendToUI('browser-syncing', { accountId: account.id, accountName: account.name, status: 'syncing' });
+
+            // Proxy cleanup (fast, non-blocking)
             if (anonymizedProxyUrl) {
-                try {
-                    await ProxyChain.closeAnonymizedProxy(anonymizedProxyUrl, true);
-                    console.log('[Proxy] Bridge closed.');
-                } catch (e) { console.error('[Proxy] Close error:', e); }
+                ProxyChain.closeAnonymizedProxy(anonymizedProxyUrl, true).catch(e =>
+                    console.error('[Proxy] Close error:', e)
+                );
             }
             if (proxyExtensionPath) {
-                try { await fs.remove(proxyExtensionPath); } catch (e) { }
+                fs.remove(proxyExtensionPath).catch(() => { });
             }
 
-            // HYBRID SYNC: Export Cookies before upload
-            console.log('[Sync] Starting cookie export...');
-            try {
-                const pages = await browser.pages();
-                console.log(`[Sync] Found ${pages.length} pages`);
-                if (pages.length > 0) {
-                    const cookies = await pages[0].cookies();
-                    console.log(`[Sync] ✓ Extracted ${cookies.length} cookies from browser`);
-                    console.log(`[Sync] Cookie domains:`, cookies.map(c => c.domain).join(', '));
-                    await SyncManager.uploadCookies(account.id, cookies);
-                } else {
-                    console.warn('[Sync] ⚠ No pages available for cookie extraction');
-                }
-            } catch (e) {
-                console.error('[Sync] ✗ Failed to export cookies:', e.message);
-            }
+            // FIRE-AND-FORGET SYNC: Use setTimeout to completely detach from event chain
+            // This allows Electron to process other events and stay responsive
+            setTimeout(() => {
+                (async () => {
+                    try {
+                        console.log('[Sync] Starting background sync for', account.name);
 
-            await SyncManager.uploadSession(account.id);
-            console.log(`[Sync] Finished upload for ${account.name}`);
+                        // HYBRID-ONLY MODE: Skip heavy session folder backup (184MB+)
+                        // Cookies + LocalStorage are already synced via uploadStorage()
+                        // Fingerprint is stored separately in accounts.fingerprint
+                        // This is sufficient for maintaining login sessions across machines
+                        // await SyncManager.uploadSession(account.id); // DISABLED - too large
+
+                        // Update last_active + CLEAR currently_used_by + log close action
+                        try {
+                            const pool = await getPool();
+                            const currentUserId = global.currentAuthUser?.id || null;
+                            const currentUsername = global.currentAuthUser?.username || 'Unknown';
+
+                            // Clear currently_used_by for real-time status
+                            await pool.query(
+                                `UPDATE accounts SET 
+                                    last_active = NOW(),
+                                    currently_used_by = NULL,
+                                    currently_used_by_name = NULL
+                                WHERE id = ?`,
+                                [account.id]
+                            );
+
+                            // Log close action to usage history
+                            await pool.query(
+                                `INSERT INTO profile_usage_log (account_id, user_id, username, action) VALUES (?, ?, ?, 'close')`,
+                                [account.id, currentUserId, currentUsername]
+                            );
+                        } catch (dbErr) {
+                            console.error('[BrowserManager] status update failed:', dbErr.message);
+                        }
+
+                        console.log(`[Sync] ✓ Completed for ${account.name}`);
+                        sendToUI('browser-closed', { accountId: account.id, accountName: account.name, status: 'synced' });
+                    } catch (syncErr) {
+                        console.error('[Sync] ✗ Error:', syncErr.message);
+                        sendToUI('browser-closed', { accountId: account.id, accountName: account.name, status: 'error' });
+                    }
+                })();
+            }, 100); // Small delay to let Electron process pending events first
         });
 
         // Continue with setup

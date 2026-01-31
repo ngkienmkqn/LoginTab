@@ -197,8 +197,8 @@
 
         table {
             width: 100%;
-            table-layout: fixed;
-            /* STRICTLY respect widths */
+            table-layout: auto;
+            /* Auto-size columns based on content */
             border-collapse: collapse;
             font-size: 14px;
         }
@@ -752,6 +752,31 @@
             transform: scale(1.05);
             border-color: var(--accent);
         }
+
+        /* Toast Animations */
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes slideOut {
+            from {
+                transform: translateX(0);
+                opacity: 1;
+            }
+
+            to {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+        }
     </style>
 </head>
 
@@ -1064,14 +1089,15 @@
                         <tr>
                             <th style="width:40px"><input type="checkbox" id="selectAllProfiles"
                                     onclick="toggleSelectAll()"></th>
-                            <th>Profile Name</th>
-                            <th>Status</th>
-                            <th>Platform</th>
-                            <th id="th-2fa-code">2FA Code</th>
-                            <th id="th-notes">Notes</th>
-                            <th>Last Active</th>
-                            <th>Proxy</th>
-                            <th style="text-align:right">Actions</th>
+                            <th style="white-space:nowrap">Profile Name</th>
+                            <th style="width:60px">Status</th>
+                            <th style="width:70px">Platform</th>
+                            <th id="th-2fa-code" style="width:70px">2FA Code</th>
+                            <th id="th-notes" style="width:70px">Notes</th>
+                            <th style="width:85px">Last Active</th>
+                            <th style="width:70px">In Use</th>
+                            <th style="width:130px">Proxy</th>
+                            <th style="width:110px;text-align:right">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="profileTableBody"></tbody>

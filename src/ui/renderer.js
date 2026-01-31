@@ -24,6 +24,184 @@ var platforms = [];
 var users = [];
 var allWorkflows = [];
 
+// Track running browser profiles
+var openBrowserIds = new Set();
+var syncingBrowserIds = new Set();
+var profileStatusMap = {}; // Real-time status: { accountId: { userId, username } }
+
+// --- Profile Status Polling (Real-time across users) ---
+async function pollProfileStatus() {
+    try {
+        const result = await ipcRenderer.invoke('get-profile-status');
+        if (result.success) {
+            profileStatusMap = result.status;
+            updateProfileStatusBadges();
+        }
+    } catch (err) {
+        console.error('[Status] Polling error:', err.message);
+    }
+}
+
+function updateProfileStatusBadges() {
+    // Update all profile rows with current usage status
+    document.querySelectorAll('tr[data-id]').forEach(row => {
+        const accountId = row.getAttribute('data-id');
+        const statusCell = row.querySelector('.profile-status-badge');
+
+        if (profileStatusMap[accountId]) {
+            const user = profileStatusMap[accountId];
+            if (statusCell) {
+                statusCell.innerHTML = `<span class="in-use-badge" title="Click to view history" onclick="openUsageHistory('${accountId}')" style="cursor:pointer;background:#8b5cf6;color:white;padding:2px 8px;border-radius:4px;font-size:11px;">🟣 ${user.username}</span>`;
+            }
+        } else if (statusCell) {
+            statusCell.innerHTML = '<span style="color:#888;font-size:11px;">📜 History</span>'; // Show history link when not in use
+        }
+    });
+}
+
+// --- Usage History Modal ---
+async function openUsageHistory(accountId) {
+    const result = await ipcRenderer.invoke('get-profile-usage-history', accountId);
+    if (!result.success) {
+        showToast('Failed to load history: ' + result.error, 'error');
+        return;
+    }
+
+    const history = result.history;
+    let content = '<div style="max-height:400px;overflow-y:auto;">';
+
+    if (history.length === 0) {
+        content += '<p style="color:#888;text-align:center;">No usage history</p>';
+    } else {
+        content += '<table style="width:100%;border-collapse:collapse;">';
+        content += '<tr><th style="text-align:left;padding:8px;border-bottom:1px solid #444;">User</th><th style="text-align:left;padding:8px;border-bottom:1px solid #444;">Action</th><th style="text-align:left;padding:8px;border-bottom:1px solid #444;">Time</th></tr>';
+        history.forEach(h => {
+            const time = new Date(h.timestamp).toLocaleString();
+            const actionColor = h.action === 'open' ? '#22c55e' : '#ef4444';
+            content += `<tr>
+                <td style="padding:8px;border-bottom:1px solid #333;">${h.username || 'Unknown'}</td>
+                <td style="padding:8px;border-bottom:1px solid #333;color:${actionColor};font-weight:bold;">${h.action.toUpperCase()}</td>
+                <td style="padding:8px;border-bottom:1px solid #333;color:#888;">${time}</td>
+            </tr>`;
+        });
+        content += '</table>';
+    }
+    content += '</div>';
+
+    // Show in alert for now (can upgrade to modal later)
+    showModal('Usage History', content);
+}
+
+function showModal(title, htmlContent) {
+    let modal = document.getElementById('usageHistoryModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'usageHistoryModal';
+        modal.className = 'modal';
+        modal.innerHTML = `
+            <div class="modal-content" style="max-width:600px;">
+                <div class="modal-header">
+                    <h2 id="usageModalTitle">${title}</h2>
+                    <button class="close-btn" onclick="document.getElementById('usageHistoryModal').classList.remove('active')">&times;</button>
+                </div>
+                <div class="modal-body" id="usageModalBody">${htmlContent}</div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+    } else {
+        document.getElementById('usageModalTitle').innerText = title;
+        document.getElementById('usageModalBody').innerHTML = htmlContent;
+    }
+    modal.classList.add('active');
+}
+
+// Start status polling after login
+var statusPollingInterval = null;
+
+// --- Toast Helper ---
+function showToast(message, type = 'info', duration = 3000) {
+    let toastContainer = document.getElementById('toast-container');
+    if (!toastContainer) {
+        toastContainer = document.createElement('div');
+        toastContainer.id = 'toast-container';
+        toastContainer.style.cssText = 'position:fixed;top:20px;right:20px;z-index:99999;display:flex;flex-direction:column;gap:10px;';
+        document.body.appendChild(toastContainer);
+    }
+
+    const icons = { success: '✅', error: '❌', info: 'ℹ️', warning: '⚠️', sync: '📤' };
+    const colors = {
+        success: 'linear-gradient(135deg, #10b981, #059669)',
+        error: 'linear-gradient(135deg, #ef4444, #dc2626)',
+        info: 'linear-gradient(135deg, #3b82f6, #2563eb)',
+        warning: 'linear-gradient(135deg, #f59e0b, #d97706)',
+        sync: 'linear-gradient(135deg, #8b5cf6, #7c3aed)'
+    };
+
+    const toast = document.createElement('div');
+    toast.style.cssText = `background:${colors[type] || colors.info};color:white;padding:12px 20px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.3);display:flex;align-items:center;gap:10px;font-size:14px;animation:slideIn 0.3s ease;`;
+    toast.innerHTML = `<span>${icons[type] || icons.info}</span><span>${message}</span>`;
+    toastContainer.appendChild(toast);
+
+    if (duration > 0) {
+        setTimeout(() => {
+            toast.style.animation = 'slideOut 0.3s ease';
+            setTimeout(() => toast.remove(), 300);
+        }, duration);
+    }
+    return toast;
+}
+
+// --- Browser State Event Listeners ---
+ipcRenderer.on('browser-opened', (event, data) => {
+    console.log('[UI] Browser opened:', data.accountName);
+    openBrowserIds.add(data.accountId);
+    updateProfileButtonState(data.accountId, 'running');
+});
+
+ipcRenderer.on('browser-syncing', (event, data) => {
+    console.log('[UI] Browser syncing:', data.accountName);
+    syncingBrowserIds.add(data.accountId);
+    showToast(`Syncing session: ${data.accountName}...`, 'sync', 0); // 0 = no auto-hide
+});
+
+ipcRenderer.on('browser-closed', (event, data) => {
+    console.log('[UI] Browser closed:', data.accountName);
+    openBrowserIds.delete(data.accountId);
+    syncingBrowserIds.delete(data.accountId);
+    updateProfileButtonState(data.accountId, 'closed');
+
+    // Remove sync toast and show success
+    const toasts = document.querySelectorAll('#toast-container > div');
+    toasts.forEach(t => { if (t.textContent.includes(data.accountName)) t.remove(); });
+    showToast(`Session synced: ${data.accountName}`, 'success', 3000);
+
+    // Refresh profile table to show updated last_active
+    if (typeof loadAllData === 'function') {
+        loadAllData();
+    }
+});
+
+// Update profile row button based on state
+function updateProfileButtonState(accountId, state) {
+    const row = document.querySelector(`tr[data-id="${accountId}"]`);
+    if (!row) return;
+
+    const openBtn = row.querySelector('.open-btn');
+    if (!openBtn) return;
+
+    if (state === 'running') {
+        openBtn.disabled = true;
+        openBtn.innerHTML = '<i class="fa-solid fa-circle" style="color:#22c55e;font-size:8px;margin-right:6px;"></i> Running';
+        openBtn.style.opacity = '0.7';
+        openBtn.style.cursor = 'not-allowed';
+    } else {
+        openBtn.disabled = false;
+        openBtn.innerHTML = '<i class="fa-solid fa-play"></i> Open';
+        openBtn.style.opacity = '1';
+        openBtn.style.cursor = 'pointer';
+    }
+}
+
 // --- Globals ---
 var editor = null;
 var currentWorkflowId = null;
@@ -181,6 +359,12 @@ async function handleLogin() {
 
             // Start 2FA loop only after login
             setInterval(update2FACodes, 1000);
+
+            // Start profile status polling (5s) for real-time updates
+            if (!statusPollingInterval) {
+                statusPollingInterval = setInterval(pollProfileStatus, 5000);
+                pollProfileStatus(); // Immediate first poll
+            }
         } else {
             alert(res.error);
         }
@@ -970,6 +1154,7 @@ function renderTable() {
 
     accounts.forEach(acc => {
         const tr = document.createElement('tr');
+        tr.dataset.id = acc.id; // For querySelector in updateProfileButtonState
 
         // Checkbox for bulk
         const isSelected = selectedAccountIds.has(acc.id) ? 'checked' : '';
@@ -983,9 +1168,9 @@ function renderTable() {
             const pPort = acc.proxy.port;
 
             proxyDisplay = `
-                <div style="display:flex; align-items:center; gap:8px;">
-                    <span class="proxy-badge">${pHost}:${pPort}</span>
-                    <div class="live-proxy-health" data-host="${pHost}" data-port="${pPort}" style="display:flex; gap:2px; align-items:flex-end; height:12px; width:16px;" title="Health Status">
+                <div style="display:flex; align-items:center; gap:4px; max-width:120px;">
+                    <span class="proxy-badge" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:90px;" title="${pHost}:${pPort}">${pHost}:${pPort}</span>
+                    <div class="live-proxy-health" data-host="${pHost}" data-port="${pPort}" style="display:flex; gap:2px; align-items:flex-end; height:12px; width:16px; flex-shrink:0;" title="Health Status">
                         <div style="width:3px; height:25%; background:#444; border-radius:1px;"></div>
                         <div style="width:3px; height:50%; background:#444; border-radius:1px;"></div>
                         <div style="width:3px; height:75%; background:#444; border-radius:1px;"></div>
@@ -1008,23 +1193,41 @@ function renderTable() {
             notesDisplay = `<span style="color:#ddd" title="${acc.notes.replace(/"/g, '&quot;')}">${truncated}</span>`;
         }
 
-        // Last Active Display
+        // Last Active Display with User Tracking
         let lastActiveDisplay = '<span style="color:#666">Never</span>';
-        if (acc.lastActive) {
-            const date = new Date(acc.lastActive);
+        if (acc.lastActive || acc.last_active) {
+            const date = new Date(acc.lastActive || acc.last_active);
             const now = new Date();
             const diffMs = now - date;
             const diffMins = Math.floor(diffMs / 60000);
+            const accessedBy = acc.last_accessed_by_name || 'Unknown';
 
-            if (diffMins < 1) lastActiveDisplay = '<span style="color:#2ecc71">Just now</span>';
-            else if (diffMins < 60) lastActiveDisplay = `<span style="color:#3498db">${diffMins}m ago</span>`;
-            else if (diffMins < 1440) lastActiveDisplay = `<span style="color:#f39c12">${Math.floor(diffMins / 60)}h ago</span>`;
-            else lastActiveDisplay = `<span style="color:#95a5a6">${Math.floor(diffMins / 1440)}d ago</span>`;
+            let timeText = '';
+            let timeColor = '#95a5a6';
+
+            if (diffMins < 1) { timeText = 'Just now'; timeColor = '#2ecc71'; }
+            else if (diffMins < 60) { timeText = `${diffMins}m ago`; timeColor = '#3498db'; }
+            else if (diffMins < 1440) { timeText = `${Math.floor(diffMins / 60)}h ago`; timeColor = '#f39c12'; }
+            else { timeText = `${Math.floor(diffMins / 1440)}d ago`; timeColor = '#95a5a6'; }
+
+            // Show time and who accessed with tooltip
+            lastActiveDisplay = `
+                <div style="display:flex;flex-direction:column;gap:2px;" title="Last accessed by ${accessedBy} at ${date.toLocaleString()}">
+                    <span style="color:${timeColor}">${timeText}</span>
+                    <span style="font-size:10px;color:#888;">by ${accessedBy}</span>
+                </div>
+            `;
         }
 
-        // Action Buttons
+        // Action Buttons - Check if browser is already running
+        const isRunning = openBrowserIds.has(acc.id);
+        const openBtnContent = isRunning
+            ? '<i class="fa-solid fa-circle" style="color:#22c55e;font-size:8px;margin-right:6px;"></i> Running'
+            : '<i class="fa-solid fa-play"></i> Open';
+        const openBtnDisabled = isRunning ? 'disabled style="padding:6px 12px; font-size:12px; opacity:0.7; cursor:not-allowed;"' : 'style="padding:6px 12px; font-size:12px"';
+
         let actions = `
-            <button class="btn" style="padding:6px 12px; font-size:12px" onclick="launch('${acc.id}')"><i class="fa-solid fa-rocket"></i> Open</button>
+            <button class="btn open-btn" ${openBtnDisabled} onclick="launch('${acc.id}')">${openBtnContent}</button>
         `;
 
         if (canEdit) {
@@ -1053,6 +1256,7 @@ function renderTable() {
             <td style="display:${isSuperAdmin ? '' : 'none'}">${codeDisplay}</td>
             <td>${notesDisplay}</td>
             <td>${lastActiveDisplay}</td>
+            <td class="profile-status-badge" style="cursor:pointer" onclick="openUsageHistory('${acc.id}')" title="Click to view usage history"><span style="color:#888;font-size:11px;">📜 History</span></td>
             <td>${proxyDisplay}</td>
             <td style="text-align:right">${actions}</td>
         `;
@@ -1324,12 +1528,14 @@ async function saveBulkAssignments() {
     }
 
     if (res.success) {
-        alert(`${bulkMode === 'assign' ? 'Assigned' : 'Revoked'} successfully.`);
+        // Toast + clear selection + hide bar
+        showToast(`${bulkMode === 'assign' ? 'Assigned' : 'Revoked'} ${accountIds.length} account(s) successfully!`, 'success');
         selectedAccountIds.clear();
+        updateSelectedHeader(); // Hide selection bar
         closeModal('bulkAssignModal');
         loadAllData();
     } else {
-        alert('Operation failed: ' + res.error);
+        showToast('Operation failed: ' + res.error, 'error');
     }
 }
 

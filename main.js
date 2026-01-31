@@ -122,6 +122,14 @@ let mainWindow;
 let tray = null;
 let isQuitting = false;
 
+// Helper to get mainWindow for IPC events from other modules
+function getMainWindow() {
+    return mainWindow;
+}
+
+// Export for BrowserManager to send events
+module.exports = { getMainWindow };
+
 // Single Instance Lock
 const gotTheLock = app.requestSingleInstanceLock();
 
@@ -454,15 +462,53 @@ ipcMain.handle('get-accounts', async (event) => {
 });
 */
 
-// Manage Assignments
+// Manage Assignments (RBAC Protected)
 ipcMain.handle('get-assignments', async (event, userId) => {
+    const callerId = global.currentAuthUser?.id;
+    if (!callerId) throw new Error('Not authenticated');
+
     const pool = await getPool();
+
+    // RBAC: Check if caller can view this user's assignments
+    const [callers] = await pool.query('SELECT role FROM users WHERE id = ?', [callerId]);
+    if (callers.length === 0) return [];
+    const role = callers[0].role;
+
+    if (role === 'staff' && userId !== callerId) {
+        return []; // Staff can only view own
+    }
+    if (role === 'admin' && userId !== callerId) {
+        const [target] = await pool.query('SELECT managed_by_admin_id FROM users WHERE id = ?', [userId]);
+        if (!target[0] || target[0].managed_by_admin_id !== callerId) {
+            return []; // Admin can only view self or managed staff
+        }
+    }
+
     const [rows] = await pool.query('SELECT account_id FROM account_assignments WHERE user_id = ?', [userId]);
     return rows.map(r => r.account_id);
 });
 
 ipcMain.handle('update-assignments', async (event, { userId, accountIds }) => {
+    const callerId = global.currentAuthUser?.id;
+    if (!callerId) throw new Error('Not authenticated');
+
     const pool = await getPool();
+
+    // RBAC: Only Admin/Super Admin can update
+    const [callers] = await pool.query('SELECT role FROM users WHERE id = ?', [callerId]);
+    if (callers.length === 0) return { success: false, error: 'User not found' };
+    const role = callers[0].role;
+
+    if (role === 'staff') {
+        return { success: false, error: 'Access denied' };
+    }
+    if (role === 'admin' && userId !== callerId) {
+        const [target] = await pool.query('SELECT managed_by_admin_id FROM users WHERE id = ?', [userId]);
+        if (!target[0] || target[0].managed_by_admin_id !== callerId) {
+            return { success: false, error: 'Access denied: Out of scope' };
+        }
+    }
+
     const connection = await pool.getConnection();
     try {
         await connection.beginTransaction();
@@ -471,6 +517,7 @@ ipcMain.handle('update-assignments', async (event, { userId, accountIds }) => {
             await connection.query('INSERT INTO account_assignments (user_id, account_id) VALUES (?, ?)', [userId, accId]);
         }
         await connection.commit();
+        await auditLog('update_assignments', callerId, { userId, count: accountIds.length });
         return { success: true };
     } catch (err) {
         await connection.rollback();
@@ -480,7 +527,7 @@ ipcMain.handle('update-assignments', async (event, { userId, accountIds }) => {
     }
 });
 
-// Bulk Assignment from Profiles
+// Bulk Assignment from Profiles (RBAC Protected)
 ipcMain.handle('get-eligible-users', async (event, role) => {
     const pool = await getPool();
     let query = '';
@@ -496,7 +543,20 @@ ipcMain.handle('get-eligible-users', async (event, role) => {
 });
 
 ipcMain.handle('bulk-assign', async (event, { accountIds, userIds }) => {
+    const callerId = global.currentAuthUser?.id;
+    if (!callerId) throw new Error('Not authenticated');
+
     const pool = await getPool();
+
+    // RBAC: Only Admin/Super Admin
+    const [callers] = await pool.query('SELECT role FROM users WHERE id = ?', [callerId]);
+    if (callers.length === 0) return { success: false, error: 'User not found' };
+    const role = callers[0].role;
+
+    if (role === 'staff') {
+        return { success: false, error: 'Access denied' };
+    }
+
     const connection = await pool.getConnection();
     try {
         await connection.beginTransaction();
@@ -507,6 +567,7 @@ ipcMain.handle('bulk-assign', async (event, { accountIds, userIds }) => {
             }
         }
         await connection.commit();
+        await auditLog('bulk_assign', callerId, { accountIds, userIds });
         return { success: true };
     } catch (err) {
         await connection.rollback();
@@ -517,7 +578,20 @@ ipcMain.handle('bulk-assign', async (event, { accountIds, userIds }) => {
 });
 
 ipcMain.handle('bulk-revoke', async (event, { accountIds, userIds }) => {
+    const callerId = global.currentAuthUser?.id;
+    if (!callerId) throw new Error('Not authenticated');
+
     const pool = await getPool();
+
+    // RBAC: Only Admin/Super Admin
+    const [callers] = await pool.query('SELECT role FROM users WHERE id = ?', [callerId]);
+    if (callers.length === 0) return { success: false, error: 'User not found' };
+    const role = callers[0].role;
+
+    if (role === 'staff') {
+        return { success: false, error: 'Access denied' };
+    }
+
     const connection = await pool.getConnection();
     try {
         await connection.beginTransaction();
@@ -527,6 +601,7 @@ ipcMain.handle('bulk-revoke', async (event, { accountIds, userIds }) => {
             }
         }
         await connection.commit();
+        await auditLog('bulk_revoke', callerId, { accountIds, userIds });
         return { success: true };
     } catch (err) {
         await connection.rollback();
@@ -1552,6 +1627,44 @@ ipcMain.handle('assign-accounts', async (event, { userId, accountIds }) => {
     }
 });
 
+// Unassign Single Account from User (RBAC Protected)
+ipcMain.handle('unassign-account', async (event, { accountId, userId }) => {
+    const callerId = global.currentAuthUser?.id;
+    if (!callerId) throw new Error('Not authenticated');
+
+    try {
+        const pool = await getPool();
+        const [callers] = await pool.query('SELECT * FROM users WHERE id = ?', [callerId]);
+        if (callers.length === 0) throw new Error('User not found');
+
+        const caller = callers[0];
+
+        // AUTHORIZATION: Only Super Admin + Admin can unassign
+        if (caller.role === 'admin') {
+            const [target] = await pool.query('SELECT * FROM users WHERE id = ?', [userId]);
+            if (!target[0] || (target[0].managed_by_admin_id !== callerId && target[0].id !== callerId)) {
+                throw new Error('Access denied: Cannot manage this user');
+            }
+        } else if (caller.role !== 'super_admin') {
+            throw new Error('Access denied: Insufficient permissions');
+        }
+
+        await pool.query(
+            'DELETE FROM account_assignments WHERE account_id = ? AND user_id = ?',
+            [accountId, userId]
+        );
+
+        // Audit log
+        await auditLog('unassign_account', callerId, { userId, accountId });
+
+        console.log('[unassign-account] Successfully unassigned account', accountId, 'from user', userId);
+        return { success: true };
+    } catch (error) {
+        console.error('[unassign-account] Error:', error);
+        return { success: false, error: error.message };
+    }
+});
+
 // Get User Permissions
 ipcMain.handle('get-user-permissions', async (event, userId) => {
     const callerId = global.currentAuthUser?.id;
@@ -1684,6 +1797,47 @@ ipcMain.handle('update-account-notes', async (event, accountId, notes) => {
         return { success: true };
     } catch (error) {
         return { success: false, error: error.message };
+    }
+});
+
+// --- IPC: Profile Real-time Status ---
+ipcMain.handle('get-profile-status', async () => {
+    try {
+        const pool = await getPool();
+        const [rows] = await pool.query(`
+            SELECT id, currently_used_by, currently_used_by_name 
+            FROM accounts 
+            WHERE currently_used_by IS NOT NULL
+        `);
+        // Return as map: { accountId: { userId, username } }
+        const statusMap = {};
+        rows.forEach(row => {
+            statusMap[row.id] = {
+                userId: row.currently_used_by,
+                username: row.currently_used_by_name
+            };
+        });
+        return { success: true, status: statusMap };
+    } catch (err) {
+        console.error('[IPC] get-profile-status error:', err.message);
+        return { success: false, error: err.message };
+    }
+});
+
+ipcMain.handle('get-profile-usage-history', async (event, accountId) => {
+    try {
+        const pool = await getPool();
+        const [rows] = await pool.query(`
+            SELECT user_id, username, action, timestamp 
+            FROM profile_usage_log 
+            WHERE account_id = ? 
+            ORDER BY timestamp DESC 
+            LIMIT 100
+        `, [accountId]);
+        return { success: true, history: rows };
+    } catch (err) {
+        console.error('[IPC] get-profile-usage-history error:', err.message);
+        return { success: false, error: err.message };
     }
 });
 
