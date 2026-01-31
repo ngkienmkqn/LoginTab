@@ -1,6 +1,6 @@
 {
     "name": "login-tab",
-    "version": "3.1.7",
+    "version": "3.1.8",
     "description": "Login Tab - Advanced Account Manager",
     "main": "main.js",
     "scripts": {

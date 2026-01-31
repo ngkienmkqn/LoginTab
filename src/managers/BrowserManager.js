@@ -156,9 +156,13 @@ class BrowserManager {
         }
 
         // 1. Download session from MySQL before launch
+        sendToUI('browser-loading-progress', { accountId: account.id, step: 'Syncing session...' });
         await SyncManager.downloadSession(account.id);
+
+        sendToUI('browser-loading-progress', { accountId: account.id, step: 'Loading cookies...' });
         const storageData = await SyncManager.downloadStorage(account.id);
 
+        sendToUI('browser-loading-progress', { accountId: account.id, step: 'Launching browser...' });
         console.log(`[BrowserManager] Launching: ${account.name} (${account.id})`);
 
         // v2.5.1: Prioritize bundled Chromium, fallback to system browsers

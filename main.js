@@ -71,7 +71,7 @@ async function checkPermission(userId, permissionKey) {
         const role = users[0].role;
         const roleDefaults = {
             super_admin: ['users.view', 'users.edit', 'users.delete', 'users.create', 'accounts.view', 'accounts.edit', 'accounts.delete', 'accounts.create'],
-            admin: ['users.view', 'users.edit', 'users.create', 'accounts.view', 'accounts.edit', 'accounts.create'],
+            admin: ['users.view', 'users.edit', 'users.create', 'accounts.view', 'accounts.edit', 'accounts.delete', 'accounts.create'],
             staff: ['accounts.view']
         };
 

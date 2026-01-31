@@ -169,6 +169,17 @@ function showToast(message, type = 'info', duration = 3000) {
 }
 
 // --- Browser State Event Listeners ---
+ipcRenderer.on('browser-loading-progress', (event, data) => {
+    console.log('[UI] Loading progress:', data.accountId, data.step);
+    const row = document.querySelector(`tr[data-id="${data.accountId}"]`);
+    if (row) {
+        const openBtn = row.querySelector('.open-btn');
+        if (openBtn) {
+            openBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ${data.step}`;
+        }
+    }
+});
+
 ipcRenderer.on('browser-opened', (event, data) => {
     console.log('[UI] Browser opened:', data.accountName);
     openBrowserIds.add(data.accountId);
@@ -206,16 +217,25 @@ function updateProfileButtonState(accountId, state) {
     const openBtn = row.querySelector('.open-btn');
     if (!openBtn) return;
 
-    if (state === 'running') {
+    if (state === 'loading') {
+        // Loading state - show spinner while syncing from cloud
+        openBtn.disabled = true;
+        openBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="margin-right:6px;"></i> Loading...';
+        openBtn.style.opacity = '0.7';
+        openBtn.style.cursor = 'wait';
+        openBtn.style.background = 'linear-gradient(135deg, #6b21a8, #7c3aed)';
+    } else if (state === 'running') {
         openBtn.disabled = true;
         openBtn.innerHTML = '<i class="fa-solid fa-circle" style="color:#22c55e;font-size:8px;margin-right:6px;"></i> Running';
         openBtn.style.opacity = '0.7';
         openBtn.style.cursor = 'not-allowed';
+        openBtn.style.background = '';
     } else {
         openBtn.disabled = false;
         openBtn.innerHTML = '<i class="fa-solid fa-play"></i> Open';
         openBtn.style.opacity = '1';
         openBtn.style.cursor = 'pointer';
+        openBtn.style.background = '';
     }
 }
 
@@ -1114,9 +1134,15 @@ async function remove(id, name) {
 }
 
 function launch(id) {
-    // Immediately disable button to prevent double-click
+    // Check if already launching or running
+    if (openBrowserIds.has(id)) {
+        console.log('[Launch] Already running/loading:', id);
+        return;
+    }
+
+    // Immediately show loading state to prevent double-click
     openBrowserIds.add(id);
-    updateProfileButtonState(id, 'running');
+    updateProfileButtonState(id, 'loading');
 
     ipcRenderer.invoke('launch-browser', id);
 }
@@ -1255,7 +1281,7 @@ function renderTable() {
         const openBtnDisabled = isRunning ? 'disabled style="padding:6px 12px; font-size:12px; opacity:0.7; cursor:not-allowed;"' : 'style="padding:6px 12px; font-size:12px"';
 
         let actions = `
-            <button class="btn open-btn" ${openBtnDisabled} onclick="launch('${acc.id}')">${openBtnContent}</button>
+            <button class="btn open-btn" ${openBtnDisabled} onclick="this.disabled=true; this.innerHTML='<i class=\\'fa-solid fa-spinner fa-spin\\'></i> Loading...'; this.style.opacity='0.7'; launch('${acc.id}')">${openBtnContent}</button>
         `;
 
         if (canEdit) {
