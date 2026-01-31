@@ -67,6 +67,30 @@ class BrowserManager {
             }
         }
 
+        // ================================================================
+        // PROFILE LOCK CHECK - Only 1 user at a time
+        // ================================================================
+        const currentUserId = global.currentAuthUser?.id;
+        const currentUsername = global.currentAuthUser?.username;
+
+        // Check if profile is in use by another user
+        if (account.currently_used_by_user_id && account.currently_used_by_user_id !== currentUserId) {
+            const inUseBy = account.currently_used_by_name || 'Unknown user';
+            throw new Error(`🔒 Profile đang được "${inUseBy}" sử dụng. Vui lòng đợi hoặc liên hệ Admin.`);
+        }
+
+        // Check if current user is restricted from using this profile
+        if (account.usage_restricted_until && account.restricted_for_user_id === currentUserId) {
+            const restrictedUntil = new Date(account.usage_restricted_until);
+            const now = new Date();
+
+            if (restrictedUntil > now) {
+                const remainingMs = restrictedUntil - now;
+                const remainingMin = Math.ceil(remainingMs / 60000);
+                throw new Error(`⏳ Bạn bị hạn chế sử dụng profile này. Còn ${remainingMin} phút.`);
+            }
+        }
+
         console.log('[BrowserManager] Loaded v2-ProxyChain (Forced Update)');
         console.log(`[BrowserManager] Syncing session for: ${account.name}`);
 

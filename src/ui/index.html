@@ -1855,6 +1855,38 @@
         </div>
     </div>
 
+    <!-- Kick Profile Modal -->
+    <div id="kickModal" class="modal-overlay">
+        <div class="modal-container" style="max-width: 400px;">
+            <div class="modal-header">
+                <h3>🔒 Kick User</h3>
+                <button class="close-btn" onclick="closeModal('kickModal')"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 16px;">
+                    Kick <strong id="kickTargetName"></strong> khỏi profile?
+                </p>
+
+                <label style="display:block; margin-bottom:8px; font-weight:600;">Tùy chọn hạn chế:</label>
+                <select id="kickRestriction"
+                    style="width:100%; padding:10px; margin-bottom:16px; background:var(--bg-body); color:var(--text-main); border:1px solid var(--border); border-radius:4px;">
+                    <option value="0">Không hạn chế (chỉ kick)</option>
+                    <option value="5">Hạn chế 5 phút</option>
+                    <option value="10">Hạn chế 10 phút</option>
+                    <option value="30">Hạn chế 30 phút</option>
+                    <option value="-1">Thu hồi quyền (vĩnh viễn)</option>
+                </select>
+
+                <div style="display:flex; gap:10px;">
+                    <button class="btn btn-danger" onclick="kickProfileUser()">
+                        <i class="fa-solid fa-user-slash"></i> Kick
+                    </button>
+                    <button class="btn btn-secondary" onclick="closeModal('kickModal')">Hủy</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="user_management.js?v=20260118-2"></script>
     <script src="renderer.js?v=20260131"></script>
 </body>

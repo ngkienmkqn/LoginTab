@@ -1053,6 +1053,88 @@ ipcMain.handle('delete-account', async (event, accountId) => {
     }
 });
 
+// --- PROFILE KICK (Admin/Super Admin only) ---
+ipcMain.handle('kick-profile-user', async (event, { accountId, restrictionMinutes }) => {
+    const callerId = global.currentAuthUser?.id;
+    if (!callerId) throw new Error('Not authenticated');
+
+    try {
+        const pool = await getPool();
+
+        // Check caller is admin or super_admin
+        const [callers] = await pool.query('SELECT * FROM users WHERE id = ?', [callerId]);
+        if (callers.length === 0) throw new Error('User not found');
+        const caller = callers[0];
+
+        if (caller.role !== 'admin' && caller.role !== 'super_admin') {
+            throw new Error('Permission denied: Only admin/super_admin can kick users');
+        }
+
+        // Get account info
+        const [accounts] = await pool.query('SELECT * FROM accounts WHERE id = ?', [accountId]);
+        if (accounts.length === 0) throw new Error('Account not found');
+        const account = accounts[0];
+
+        const kickedUserId = account.currently_used_by_user_id;
+        const kickedUsername = account.currently_used_by_name;
+
+        if (!kickedUserId) {
+            return { success: false, error: 'Profile is not currently in use' };
+        }
+
+        // Calculate restriction end time
+        let restrictedUntil = null;
+        if (restrictionMinutes === -1) {
+            // Revoke access - remove assignment entirely
+            await pool.query('DELETE FROM account_assignments WHERE account_id = ? AND user_id = ?', [accountId, kickedUserId]);
+            console.log(`[Kick] Removed assignment for user ${kickedUserId} from account ${accountId}`);
+        } else if (restrictionMinutes > 0) {
+            restrictedUntil = new Date(Date.now() + restrictionMinutes * 60000);
+        }
+
+        // Update account - clear current usage and set restriction if applicable
+        await pool.query(`
+            UPDATE accounts SET 
+                usage_restricted_until = ?,
+                restricted_by_user_id = ?,
+                restricted_for_user_id = ?,
+                currently_used_by_user_id = NULL,
+                currently_used_by_name = NULL
+            WHERE id = ?
+        `, [restrictedUntil, restrictionMinutes > 0 ? callerId : null, restrictionMinutes > 0 ? kickedUserId : null, accountId]);
+
+        // Notify all clients to force-close this profile
+        const mainWindow = require('./main.js').getMainWindow();
+        if (mainWindow) {
+            mainWindow.webContents.send('force-close-browser', {
+                accountId,
+                kickedUserId,
+                kickedUsername,
+                restrictionMinutes,
+                kickedBy: caller.username
+            });
+        }
+
+        // Audit log
+        await auditLog('kick_profile_user', callerId, {
+            accountId,
+            kickedUserId,
+            kickedUsername,
+            restrictionMinutes
+        });
+
+        console.log(`[Kick] ${caller.username} kicked ${kickedUsername} from ${accountId} (Restriction: ${restrictionMinutes}min)`);
+
+        return {
+            success: true,
+            message: `Đã kick ${kickedUsername}${restrictionMinutes > 0 ? ` (hạn chế ${restrictionMinutes} phút)` : restrictionMinutes === -1 ? ' (thu hồi quyền)' : ''}`
+        };
+    } catch (error) {
+        console.error('Kick failed:', error);
+        return { success: false, error: error.message };
+    }
+});
+
 // --- AUTHENTICATION ---
 ipcMain.handle('auth-login', async (event, { username, password }) => {
     try {

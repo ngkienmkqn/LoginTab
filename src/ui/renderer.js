@@ -209,6 +209,32 @@ ipcRenderer.on('browser-closed', (event, data) => {
     }
 });
 
+// Listen for admin kick - force close browser
+ipcRenderer.on('force-close-browser', (event, data) => {
+    const currentUserId = global.currentAuthUser?.id;
+
+    // Only close if we're the kicked user
+    if (data.kickedUserId === currentUserId) {
+        console.log('[UI] You have been kicked from profile:', data.accountId);
+
+        // Close browser if running
+        openBrowserIds.delete(data.accountId);
+        updateProfileButtonState(data.accountId, 'closed');
+
+        // Show notification
+        let msg = `🔒 Bạn đã bị ${data.kickedBy} kick khỏi profile.`;
+        if (data.restrictionMinutes === -1) {
+            msg += ' Quyền sử dụng đã bị thu hồi.';
+        } else if (data.restrictionMinutes > 0) {
+            msg += ` Hạn chế ${data.restrictionMinutes} phút.`;
+        }
+        showToast(msg, 'warning', 10000);
+
+        // Refresh data
+        loadAllData();
+    }
+});
+
 // Update profile row button based on state
 function updateProfileButtonState(accountId, state) {
     const row = document.querySelector(`tr[data-id="${accountId}"]`);
@@ -1133,6 +1159,40 @@ async function remove(id, name) {
     }
 }
 
+// --- Kick Profile User (Admin/Super Admin only) ---
+var kickTargetAccountId = null;
+var kickTargetUsername = null;
+
+function openKickModal(accountId, username) {
+    kickTargetAccountId = accountId;
+    kickTargetUsername = username;
+    document.getElementById('kickTargetName').textContent = username;
+    document.getElementById('kickRestriction').value = '0';
+    document.getElementById('kickModal').classList.add('active');
+}
+
+async function kickProfileUser() {
+    if (!kickTargetAccountId) return;
+
+    const restriction = parseInt(document.getElementById('kickRestriction').value);
+
+    const res = await ipcRenderer.invoke('kick-profile-user', {
+        accountId: kickTargetAccountId,
+        restrictionMinutes: restriction
+    });
+
+    if (res.success) {
+        showToast(res.message, 'success', 3000);
+        closeModal('kickModal');
+        loadAllData();
+    } else {
+        alert('Kick failed: ' + res.error);
+    }
+
+    kickTargetAccountId = null;
+    kickTargetUsername = null;
+}
+
 function launch(id) {
     // Check if already launching or running
     if (openBrowserIds.has(id)) {
@@ -1299,6 +1359,25 @@ function renderTable() {
             if (p) platformDisplay = `<span style="color:#a855f7; font-weight:500">${p.name}</span>`;
         }
 
+        // In Use Display - Show who's currently using with kick button for admin
+        let inUseDisplay = '<span style="color:#888;font-size:11px;">—</span>';
+        const currentUserId = currentUser?.id;
+        const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
+
+        if (acc.currently_used_by_user_id) {
+            const usedBy = acc.currently_used_by_name || 'Unknown';
+            const isMe = acc.currently_used_by_user_id === currentUserId;
+
+            if (isMe) {
+                inUseDisplay = `<span style="color:#22c55e;font-weight:600;font-size:11px;">🟢 You</span>`;
+            } else {
+                inUseDisplay = `<span style="color:#f59e0b;font-weight:500;font-size:11px;">🔒 ${usedBy}</span>`;
+                if (isAdmin) {
+                    inUseDisplay += ` <button class="btn btn-danger" style="padding:2px 6px;font-size:10px;margin-left:4px;" onclick="openKickModal('${acc.id}', '${usedBy.replace(/'/g, "\\'")}')"><i class="fa-solid fa-user-slash"></i></button>`;
+                }
+            }
+        }
+
         tr.innerHTML = `
             ${checkboxTd}
             <td>
@@ -1310,6 +1389,7 @@ function renderTable() {
             <td style="display:${isSuperAdmin ? '' : 'none'}">${codeDisplay}</td>
             <td>${notesDisplay}</td>
             <td>${lastActiveDisplay}</td>
+            <td>${inUseDisplay}</td>
             <td class="profile-status-badge" style="cursor:pointer" onclick="openUsageHistory('${acc.id}')" title="Click to view usage history"><span style="color:#888;font-size:11px;">📜 History</span></td>
             <td>${proxyDisplay}</td>
             <td style="text-align:right">${actions}</td>
