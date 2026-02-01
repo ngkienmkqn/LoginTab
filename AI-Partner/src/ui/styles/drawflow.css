@@ -1,0 +1,161 @@
+/**
+ * Drawflow Editor CSS
+ * Login Tab - Extracted from index.html
+ */
+
+/* Base Node Styles */
+.drawflow .drawflow-node {
+    background: #ffffff !important;
+    border: 1px solid #e0e0e0 !important;
+    border-radius: 8px !important;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05) !important;
+    width: 180px !important;
+    padding: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    z-index: 2 !important;
+    transition: all 0.2s ease;
+    will-change: transform;
+    backface-visibility: hidden;
+    transform: translateZ(0);
+}
+
+.drawflow .drawflow-node:hover {
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1) !important;
+    transform: translateY(-2px);
+}
+
+.drawflow .drawflow-node.selected {
+    border: 1px solid var(--accent) !important;
+    box-shadow: 0 0 0 3px var(--accent), 0 8px 20px rgba(0, 0, 0, 0.4) !important;
+    z-index: 9999 !important;
+}
+
+/* Node Header Colors */
+.drawflow .drawflow-node.start .node-header {
+    border-top: 4px solid #2e7d32;
+    color: #2e7d32;
+}
+
+.drawflow .drawflow-node.click .node-header,
+.drawflow .drawflow-node.click_element .node-header {
+    border-top: 4px solid #1976d2;
+    color: #1976d2;
+}
+
+.drawflow .drawflow-node.type .node-header,
+.drawflow .drawflow-node.type_text .node-header {
+    border-top: 4px solid #f57f17;
+    color: #f57f17;
+}
+
+.drawflow .drawflow-node.wait .node-header,
+.drawflow .drawflow-node.wait_for_element .node-header {
+    border-top: 4px solid #7b1fa2;
+    color: #7b1fa2;
+}
+
+.drawflow .drawflow-node.find .node-header {
+    border-top: 4px solid #0097a7;
+    color: #0097a7;
+}
+
+.drawflow .drawflow-node.twofa .node-header,
+.drawflow .drawflow-node.get_2fa_code .node-header {
+    border-top: 4px solid #c2185b;
+    color: #c2185b;
+}
+
+/* Node Structure */
+.node-header {
+    padding: 10px 15px;
+    background: #fff;
+    font-weight: 700;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid #f0f0f0;
+    border-radius: 8px 8px 0 0;
+    margin-bottom: 0;
+}
+
+.node-body {
+    padding: 10px 15px;
+    background: #fff;
+    color: #666;
+    font-size: 12px;
+    border-radius: 0 0 8px 8px;
+    min-height: 40px;
+}
+
+/* Input/Output Ports */
+.drawflow .drawflow-node .inputs,
+.drawflow .drawflow-node .outputs {
+    width: 0;
+    display: flex;
+    justify-content: center;
+}
+
+.drawflow .drawflow-node .input,
+.drawflow .drawflow-node .output {
+    width: 12px;
+    height: 12px;
+    border: 2px solid #ccc;
+    background: #fff;
+    border-radius: 50%;
+    transition: all 0.2s;
+    position: absolute;
+    z-index: 10;
+}
+
+.drawflow .drawflow-node .input {
+    top: 20px;
+    left: -6px;
+}
+
+.drawflow .drawflow-node .output {
+    top: 20px;
+    right: -6px;
+}
+
+.drawflow .drawflow-node .input:hover,
+.drawflow .drawflow-node .output:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+    transform: scale(1.2);
+}
+
+/* Performance: Hide connections during drag */
+.drawflow.drag .connection,
+.drawflow.drag .main-path {
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+
+.drawflow .connection {
+    will-change: d;
+    transition: opacity 0.1s ease;
+}
+
+/* Zoom Controls */
+.zoom-btn {
+    width: 45px;
+    height: 45px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-main);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    transition: all 0.2s;
+}
+
+.zoom-btn:hover {
+    background: var(--accent);
+    transform: scale(1.05);
+    border-color: var(--accent);
+}

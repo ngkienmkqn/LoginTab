@@ -1,0 +1,154 @@
+/**
+ * Table CSS
+ * Login Tab - Extracted from index.html
+ */
+
+/* Table Container */
+.table-container {
+    background-color: var(--bg-card);
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    flex: 1;
+    overflow: auto;
+}
+
+table {
+    width: 100%;
+    table-layout: auto;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+
+th {
+    text-align: left;
+    padding: 16px;
+    background-color: var(--bg-hover);
+    color: var(--text-muted);
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+td {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+}
+
+tr:hover td {
+    background-color: rgba(255, 255, 255, 0.02);
+}
+
+/* Profiles Table (8+ Columns) */
+#view-profiles th:nth-child(1) {
+    width: 40px;
+}
+
+/* Checkbox */
+#view-profiles th:nth-child(2) {
+    width: 250px;
+}
+
+/* Name */
+#view-profiles th:nth-child(3) {
+    width: 80px;
+}
+
+/* Status */
+#view-profiles th:nth-child(4) {
+    width: 100px;
+}
+
+/* Platform */
+#view-profiles th:nth-child(5) {
+    width: 80px;
+}
+
+/* 2FA */
+#view-profiles th:nth-child(6) {
+    width: 150px;
+}
+
+/* Notes */
+#view-profiles th:nth-child(7) {
+    width: 120px;
+}
+
+/* Last Active */
+#view-profiles th:nth-child(8) {
+    width: 200px;
+    text-align: left;
+}
+
+/* Proxy */
+#view-profiles th:nth-child(9) {
+    width: auto;
+    text-align: right;
+}
+
+/* Actions */
+
+/* Proxies Table (5 Columns) */
+#view-proxies th:nth-child(1) {
+    width: 30%;
+}
+
+/* Host:Port */
+#view-proxies th:nth-child(2) {
+    width: 15%;
+}
+
+/* User */
+#view-proxies th:nth-child(3) {
+    width: 15%;
+}
+
+/* Pass */
+#view-proxies th:nth-child(4) {
+    width: 10%;
+}
+
+/* Health */
+#view-proxies th:nth-child(5) {
+    width: 100px;
+    text-align: right;
+}
+
+/* Actions */
+
+/* Platforms Table (3 Columns) */
+#view-platforms th:nth-child(1) {
+    width: 30%;
+}
+
+/* Name */
+#view-platforms th:nth-child(2) {
+    width: auto;
+}
+
+/* URL */
+#view-platforms th:nth-child(3) {
+    width: 100px;
+    text-align: right;
+}
+
+/* Actions */
+
+/* Extensions Table (3 Columns) */
+#view-extensions th:nth-child(1) {
+    width: 20%;
+}
+
+/* Name */
+#view-extensions th:nth-child(2) {
+    width: auto;
+}
+
+/* Path */
+#view-extensions th:nth-child(3) {
+    width: 100px;
+    text-align: right;
+}
+
+/* Actions */

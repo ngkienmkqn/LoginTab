@@ -1,0 +1,68 @@
+{
+   "checksum": "fbe38d5f92899017856786a9d18dfff3",
+   "roots": {
+      "bookmark_bar": {
+         "children": [ {
+            "date_added": "13259784421789865",
+            "date_last_used": "0",
+            "guid": "b360ac80-98bb-4e1d-8b03-ebf177c7f8cd",
+            "id": "9",
+            "name": "Sync Howto",
+            "type": "url",
+            "url": "https://www.srware.net/forum/viewtopic.php?f=18&t=62308"
+         }, {
+            "date_added": "13003283815115659",
+            "date_last_used": "0",
+            "guid": "4003c421-5313-43fb-b520-17a40fcd228e",
+            "id": "2",
+            "name": "Iron Forum",
+            "type": "url",
+            "url": "http://www.srware.net/forum/"
+         }, {
+            "date_added": "13221217910310385",
+            "date_last_used": "0",
+            "guid": "532529e5-7021-4b45-b005-d2f792f9af7e",
+            "id": "3",
+            "name": "Anonymous VPN",
+            "type": "url",
+            "url": "https://www.srware.net/vpn/"
+         }, {
+            "date_added": "13395149292052094",
+            "date_last_used": "0",
+            "guid": "c59384f3-db32-4fa2-bff1-31c81ed5155b",
+            "id": "13",
+            "name": "Inside AI",
+            "type": "url",
+            "url": "https://www.promptinjection.net/"
+         } ],
+         "date_added": "13003283766115659",
+         "date_last_used": "0",
+         "date_modified": "13395149292052094",
+         "guid": "0bc5d13f-2cba-5d74-951f-3f233fe6c908",
+         "id": "1",
+         "name": "Bookmarks bar",
+         "type": "folder"
+      },
+      "other": {
+         "children": [  ],
+         "date_added": "13003283766116659",
+         "date_last_used": "0",
+         "date_modified": "0",
+         "guid": "82b081ec-3dd3-529c-8475-ab6c344590dd",
+         "id": "6",
+         "name": "Other bookmarks",
+         "type": "folder"
+      },
+      "synced": {
+         "children": [  ],
+         "date_added": "13003283766116659",
+         "date_last_used": "0",
+         "date_modified": "0",
+         "guid": "4cf2e351-0e85-532b-bb37-df045d8f8d0f",
+         "id": "7",
+         "name": "Mobile bookmarks",
+         "type": "folder"
+      }
+   },
+   "version": 1
+}
