@@ -13,8 +13,23 @@ const { v4: uuidv4 } = require('uuid');
 
 const SESSIONS_DIR = path.join(app.getPath('userData'), 'sessions');
 
+// ==================== KICK FORCE CLOSE BROWSER ====================
+// IPC handler for force-closing browser when admin kicks user (multi-machine support)
+ipcMain.handle('force-close-local-browser', async (event, accountId) => {
+    try {
+        console.log(`[IPC] force-close-local-browser called for: ${accountId}`);
+        const browserClosed = await BrowserManager.closeBrowserByAccountId(accountId);
+        console.log(`[IPC] force-close-local-browser result: ${browserClosed}`);
+        return { success: browserClosed };
+    } catch (error) {
+        console.error('[IPC] force-close-local-browser error:', error);
+        return { success: false, error: error.message };
+    }
+});
+
 // ==================== RBAC v2: Session Management ====================
 global.currentAuthUser = null; // { id, username, role }
+
 
 // ==================== RBAC v2: Audit Logging ====================
 async function auditLog(action, userId, details) {
