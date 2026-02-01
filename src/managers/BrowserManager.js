@@ -1497,11 +1497,21 @@ class BrowserManager {
      * @returns {boolean} - Whether browser was successfully closed
      */
     static async closeBrowserByAccountId(accountId) {
-        console.log(`[BrowserManager] closeBrowserByAccountId called for: ${accountId}`);
+        console.log(`[BrowserManager] closeBrowserByAccountId called for: ${accountId} (type: ${typeof accountId})`);
+        console.log(`[BrowserManager] activeBrowsers has ${BrowserManager.activeBrowsers.size} entries`);
+        console.log(`[BrowserManager] activeBrowsers keys:`, [...BrowserManager.activeBrowsers.keys()]);
 
         if (!BrowserManager.activeBrowsers.has(accountId)) {
             console.log(`[BrowserManager] No active browser found for account: ${accountId}`);
-            return false;
+
+            // Try string conversion
+            const stringId = String(accountId);
+            if (BrowserManager.activeBrowsers.has(stringId)) {
+                console.log(`[BrowserManager] Found browser with stringified ID: ${stringId}`);
+                accountId = stringId;
+            } else {
+                return false;
+            }
         }
 
         try {
